@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search } from 'lucide-react';
-import { FiEdit2, FiTrash2, FiUserPlus, FiUserX } from 'react-icons/fi';
-import { createUser, getGrades, getSubjects } from '../api/usersApi';
+import { Plus, Search, X } from 'lucide-react';
+import { FiEdit2, FiTrash2, FiUserCheck, FiUserPlus, FiUserX } from 'react-icons/fi';
+import Swal from 'sweetalert2';
+import {
+  createUser,
+  deleteAdminUser,
+  getGrades,
+  getSubjects,
+  updateAdminUser,
+  updateAdminUserStatus,
+} from '../api/usersApi';
 import { useUserStats } from '../hooks/useUserStats';
 import { useUsers } from '../hooks/useUsers';
 
@@ -12,7 +20,6 @@ const cards = [
   { key: 'activeUsers', label: 'Active Users', valueClass: 'text-[#00a04f]' },
   { key: 'inactiveUsers', label: 'Inactive Users', valueClass: 'text-[#e10000]' },
 ];
-const DEFAULT_SUBJECTS = ['Math', 'Physics', 'Chemistry', 'SVT', 'French', 'Arabic', 'English'];
 
 const formatValue = (value) => {
   if (value === null || value === undefined || Number.isNaN(value)) return '--';
@@ -56,6 +63,7 @@ const getInitials = (name) => {
 };
 
 const normalizeValue = (value) => String(value || '').trim();
+const uniqueList = (items) => Array.from(new Set((items || []).map(normalizeValue).filter(Boolean)));
 
 const UserManagementPage = () => {
   const queryClient = useQueryClient();
@@ -74,6 +82,25 @@ const UserManagementPage = () => {
     confirmPin: '',
   });
   const [formError, setFormError] = useState('');
+  const [isAssignOpen, setIsAssignOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [assignmentValues, setAssignmentValues] = useState({
+    gradeId: '',
+    gradeIds: [],
+    subject: '',
+    subjects: [],
+  });
+  const [assignmentError, setAssignmentError] = useState('');
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editUser, setEditUser] = useState(null);
+  const [editValues, setEditValues] = useState({
+    fullName: '',
+    phone: '',
+    gradeId: '',
+    subject: '',
+  });
+  const [editError, setEditError] = useState('');
+  const [rowActionError, setRowActionError] = useState('');
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -142,17 +169,8 @@ const UserManagementPage = () => {
     const fromApi = [...(usersData?.subjectOptions || []), ...subjectsFromApi]
       .map(normalizeValue)
       .filter(Boolean);
-    const derivedSubjects = users
-      .flatMap((user) => {
-        const fromProfile = normalizeValue(user.subject);
-        const fromClasses = (user.assignedClasses || []).map((item) => normalizeValue(item).split('-')[1]?.trim());
-        return [fromProfile, ...fromClasses];
-      })
-      .filter(Boolean);
-
-    const all = new Set([...DEFAULT_SUBJECTS, ...fromApi, ...derivedSubjects]);
-    return Array.from(all).filter(Boolean);
-  }, [users, usersData?.subjectOptions, subjectsFromApi]);
+    return Array.from(new Set(fromApi));
+  }, [usersData?.subjectOptions, subjectsFromApi]);
 
   const createUserMutation = useMutation({
     mutationFn: createUser,
@@ -174,6 +192,58 @@ const UserManagementPage = () => {
     },
     onError: (error) => {
       setFormError(error?.response?.data?.message || 'Failed to create user');
+    },
+  });
+
+  const updateAssignmentMutation = useMutation({
+    mutationFn: ({ userId, payload }) => updateAdminUser(userId, payload),
+    onSuccess: () => {
+      setIsAssignOpen(false);
+      setSelectedUser(null);
+      setAssignmentError('');
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-users-stats'] });
+    },
+    onError: (error) => {
+      setAssignmentError(error?.response?.data?.message || 'Failed to save assignments');
+    },
+  });
+
+  const updateUserMutation = useMutation({
+    mutationFn: ({ userId, payload }) => updateAdminUser(userId, payload),
+    onSuccess: () => {
+      setIsEditOpen(false);
+      setEditUser(null);
+      setEditError('');
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-users-stats'] });
+    },
+    onError: (error) => {
+      setEditError(error?.response?.data?.message || 'Failed to update user');
+    },
+  });
+
+  const toggleStatusMutation = useMutation({
+    mutationFn: ({ userId, nextStatus }) => updateAdminUserStatus(userId, nextStatus),
+    onSuccess: () => {
+      setRowActionError('');
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-users-stats'] });
+    },
+    onError: (error) => {
+      setRowActionError(error?.response?.data?.message || 'Failed to update user status');
+    },
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: (userId) => deleteAdminUser(userId),
+    onSuccess: () => {
+      setRowActionError('');
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-users-stats'] });
+    },
+    onError: (error) => {
+      setRowActionError(error?.response?.data?.message || 'Failed to delete user');
     },
   });
 
@@ -300,6 +370,268 @@ const UserManagementPage = () => {
     createUserMutation.mutate(payload);
   };
 
+  const findGradeById = (gradeId) =>
+    gradeOptions.find((item) => normalizeValue(item.id) === normalizeValue(gradeId));
+
+  const findGradeByLabel = (label) => {
+    const normalized = normalizeValue(label).toLowerCase();
+    return gradeOptions.find((item) => {
+      const name = normalizeValue(item.name).toLowerCase();
+      const level = normalizeValue(item.level).toLowerCase();
+      return normalized && (name === normalized || level === normalized);
+    });
+  };
+
+  const openEditModal = (user) => {
+    const role = normalizeValue(user?.role).toLowerCase();
+    const defaultGradeId =
+      normalizeValue(user?.gradeId) ||
+      normalizeValue(findGradeByLabel(user?.gradeLevel)?.id) ||
+      normalizeValue(findGradeByLabel(user?.grade)?.id);
+
+    setEditUser(user);
+    setEditValues({
+      fullName: normalizeValue(user?.name),
+      phone: normalizeValue(user?.phone),
+      gradeId: role === 'student' ? defaultGradeId : '',
+      subject: role === 'teacher' ? normalizeValue(user?.subject) : '',
+    });
+    setEditError('');
+    setIsEditOpen(true);
+  };
+
+  const closeEditModal = () => {
+    if (updateUserMutation.isPending) return;
+    setIsEditOpen(false);
+    setEditUser(null);
+    setEditError('');
+  };
+
+  const handleEditChange = (key, value) => {
+    setEditValues((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSaveEdit = (event) => {
+    event.preventDefault();
+    setEditError('');
+    if (!editUser?.id) return;
+
+    const role = normalizeValue(editUser.role).toLowerCase();
+    const fullName = normalizeValue(editValues.fullName);
+    const phone = normalizeValue(editValues.phone);
+    const subject = normalizeValue(editValues.subject);
+    const gradeId = normalizeValue(editValues.gradeId);
+
+    if (!fullName || !phone) {
+      setEditError('Please fill all required fields');
+      return;
+    }
+
+    if (!/^[234]\d{7}$/.test(phone)) {
+      setEditError('Phone must be 8 digits and start with 2, 3, or 4');
+      return;
+    }
+
+    if (role === 'teacher') {
+      if (!subject) {
+        setEditError('Subject is required for teachers');
+        return;
+      }
+      const payload = {
+        role: 'teacher',
+        name: fullName,
+        phone,
+        subject,
+        assignedGradeIds: Array.isArray(editUser.assignedGradeIds) ? editUser.assignedGradeIds : [],
+        assignedGrades: Array.isArray(editUser.assignedGrades) ? editUser.assignedGrades : [],
+      };
+      updateUserMutation.mutate({ userId: editUser.id, payload });
+      return;
+    }
+
+    if (role === 'student') {
+      const grade = findGradeById(gradeId);
+      if (!gradeId || !grade) {
+        setEditError('Please select a valid grade');
+        return;
+      }
+      const payload = {
+        role: 'student',
+        name: fullName,
+        phone,
+        gradeId,
+        gradeLevel: normalizeValue(grade.level || grade.name),
+        assignedSubjectIds: Array.isArray(editUser.assignedSubjectIds) ? editUser.assignedSubjectIds : [],
+        assignedSubjects: Array.isArray(editUser.assignedSubjects) ? editUser.assignedSubjects : [],
+      };
+      updateUserMutation.mutate({ userId: editUser.id, payload });
+      return;
+    }
+
+    updateUserMutation.mutate({
+      userId: editUser.id,
+      payload: { name: fullName, phone },
+    });
+  };
+
+  const handleToggleUserStatus = (user) => {
+    const currentStatus = normalizeValue(user?.status).toLowerCase();
+    const nextStatus = currentStatus === 'active' ? 'blocked' : 'active';
+    toggleStatusMutation.mutate({ userId: user.id, nextStatus });
+  };
+
+  const handleDeleteUser = async (user) => {
+    const result = await Swal.fire({
+      title: 'Delete User?',
+      text: `Are you sure you want to delete "${user?.name || 'this user'}"?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, delete',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#1f3f93',
+    });
+
+    if (!result.isConfirmed) return;
+
+    deleteUserMutation.mutate(user.id, {
+      onSuccess: async () => {
+        await Swal.fire({
+          title: 'Deleted',
+          text: 'User deleted successfully.',
+          icon: 'success',
+          confirmButtonColor: '#1f3f93',
+        });
+      },
+      onError: async (error) => {
+        await Swal.fire({
+          title: 'Delete Failed',
+          text: error?.response?.data?.message || 'Failed to delete user',
+          icon: 'error',
+          confirmButtonColor: '#1f3f93',
+        });
+      },
+    });
+  };
+
+  const openAssignModal = (user) => {
+    const role = normalizeValue(user?.role).toLowerCase();
+    const userAssignedSubjects = uniqueList(user?.assignedSubjects || []);
+    const userAssignedGradeIds = uniqueList((user?.assignedGradeIds || []).map(String));
+    const userAssignedGrades = uniqueList(user?.assignedGrades || []);
+
+    const defaultStudentGradeId =
+      normalizeValue(user?.gradeId) ||
+      normalizeValue(findGradeByLabel(user?.gradeLevel)?.id) ||
+      normalizeValue(findGradeByLabel(user?.grade)?.id) ||
+      '';
+
+    const defaultTeacherGradeIds =
+      userAssignedGradeIds.length > 0
+        ? userAssignedGradeIds
+        : uniqueList(userAssignedGrades.map((grade) => findGradeByLabel(grade)?.id));
+
+    const defaultTeacherSubject =
+      normalizeValue(user?.subject) || normalizeValue(userAssignedSubjects[0] || '');
+
+    setSelectedUser(user);
+    setAssignmentValues({
+      gradeId: defaultStudentGradeId,
+      gradeIds: defaultTeacherGradeIds,
+      subject: defaultTeacherSubject,
+      subjects: userAssignedSubjects,
+    });
+    setAssignmentError('');
+    setIsAssignOpen(true);
+  };
+
+  const closeAssignModal = () => {
+    if (updateAssignmentMutation.isPending) return;
+    setIsAssignOpen(false);
+    setSelectedUser(null);
+    setAssignmentError('');
+  };
+
+  const toggleTeacherGrade = (gradeId) => {
+    setAssignmentValues((prev) => {
+      const current = new Set(prev.gradeIds.map(String));
+      const key = String(gradeId);
+      if (current.has(key)) current.delete(key);
+      else current.add(key);
+      return { ...prev, gradeIds: Array.from(current) };
+    });
+  };
+
+  const toggleStudentSubject = (subjectName) => {
+    setAssignmentValues((prev) => {
+      const name = normalizeValue(subjectName);
+      const current = new Set(prev.subjects.map(normalizeValue));
+      if (current.has(name)) current.delete(name);
+      else current.add(name);
+      return { ...prev, subjects: Array.from(current) };
+    });
+  };
+
+  const handleSaveAssignments = (event) => {
+    event.preventDefault();
+    setAssignmentError('');
+    if (!selectedUser?.id) return;
+
+    const role = normalizeValue(selectedUser.role).toLowerCase();
+    if (role !== 'student' && role !== 'teacher') {
+      setAssignmentError('Assignments are only supported for students and teachers');
+      return;
+    }
+
+    if (role === 'student') {
+      const gradeId = normalizeValue(assignmentValues.gradeId);
+      const grade = findGradeById(gradeId);
+      const subjects = uniqueList(assignmentValues.subjects);
+
+      if (!gradeId || !grade) {
+        setAssignmentError('Please select one grade for the student');
+        return;
+      }
+      if (subjects.length === 0) {
+        setAssignmentError('Please assign at least one subject for the student');
+        return;
+      }
+
+      const payload = {
+        role: 'student',
+        gradeId,
+        gradeLevel: normalizeValue(grade.level || grade.name),
+        assignedSubjects: subjects,
+      };
+      updateAssignmentMutation.mutate({ userId: selectedUser.id, payload });
+      return;
+    }
+
+    const subject = normalizeValue(assignmentValues.subject);
+    const gradeIds = uniqueList(assignmentValues.gradeIds.map(String));
+    if (!subject) {
+      setAssignmentError('Please select one subject for the teacher');
+      return;
+    }
+    if (gradeIds.length === 0) {
+      setAssignmentError('Please assign at least one grade for the teacher');
+      return;
+    }
+
+    const assignedGrades = gradeIds
+      .map((gradeId) => findGradeById(gradeId))
+      .filter(Boolean)
+      .map((grade) => normalizeValue(grade.level || grade.name))
+      .filter(Boolean);
+
+    const payload = {
+      role: 'teacher',
+      subject,
+      assignedGradeIds: gradeIds,
+      assignedGrades,
+    };
+    updateAssignmentMutation.mutate({ userId: selectedUser.id, payload });
+  };
+
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 rounded-[10px] border border-[#d6e3fb] bg-white p-3 lg:flex-row lg:items-center lg:justify-between">
@@ -364,6 +696,11 @@ const UserManagementPage = () => {
       </div>
 
       <div className="overflow-hidden rounded-[10px] border border-[#d6e3fb] bg-white">
+        {rowActionError && (
+          <div className="border-b border-[#f5d0d0] bg-[#fff5f5] px-4 py-2 text-sm text-red-600">
+            {rowActionError}
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="min-w-full">
             <thead className="bg-[#eef4ff] text-left text-[13px] font-semibold text-[#1f3f93]">
@@ -433,16 +770,51 @@ const UserManagementPage = () => {
                       <td className="px-5 py-4">{formatDate(user.joinDate)}</td>
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
-                          <button type="button" className="text-[#1f4ca8]" title="Add">
-                            <FiUserPlus size={16} />
-                          </button>
-                          <button type="button" className="text-[#4d91ff]" title="Edit">
+                          {['student', 'teacher'].includes(normalizeValue(user.role).toLowerCase()) ? (
+                            <button
+                              type="button"
+                              className="text-[#1f4ca8]"
+                              title="Manage Class Assignment"
+                              onClick={() => openAssignModal(user)}
+                            >
+                              <FiUserPlus size={16} />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="cursor-not-allowed text-[#9ab0dc]"
+                              title="Assignment not available"
+                              disabled
+                            >
+                              <FiUserPlus size={16} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="text-[#4d91ff]"
+                            title="Edit user"
+                            onClick={() => openEditModal(user)}
+                          >
                             <FiEdit2 size={16} />
                           </button>
-                          <button type="button" className="text-[#f0a115]" title="Role">
-                            <FiUserX size={16} />
+                          <button
+                            type="button"
+                            className={`disabled:cursor-not-allowed disabled:opacity-50 ${
+                              isActive ? 'text-[#f0a115]' : 'text-[#0ca65f]'
+                            }`}
+                            title={isActive ? 'Block user' : 'Activate user'}
+                            onClick={() => handleToggleUserStatus(user)}
+                            disabled={toggleStatusMutation.isPending || deleteUserMutation.isPending}
+                          >
+                            {isActive ? <FiUserX size={16} /> : <FiUserCheck size={16} />}
                           </button>
-                          <button type="button" className="text-[#e10000]" title="Delete">
+                          <button
+                            type="button"
+                            className="text-[#e10000] disabled:cursor-not-allowed disabled:opacity-50"
+                            title="Delete user"
+                            onClick={() => handleDeleteUser(user)}
+                            disabled={deleteUserMutation.isPending || toggleStatusMutation.isPending}
+                          >
                             <FiTrash2 size={16} />
                           </button>
                         </div>
@@ -478,6 +850,299 @@ const UserManagementPage = () => {
           </div>
         </div>
       </div>
+
+      {isEditOpen && editUser && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[#0a1d4a]/30 p-3">
+          <div className="w-full max-w-[520px] rounded-xl border border-[#d6e3fb] bg-white p-6">
+            <form className="space-y-4" onSubmit={handleSaveEdit}>
+              <div className="text-sm text-[#5f79af]">
+                Role:{' '}
+                <span className="rounded-full bg-[#eef4ff] px-3 py-1 font-semibold capitalize text-[#1f4ca8]">
+                  {editUser.role}
+                </span>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Full Name</label>
+                <input
+                  type="text"
+                  value={editValues.fullName}
+                  onChange={(event) => handleEditChange('fullName', event.target.value)}
+                  className="h-12 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Phone Number</label>
+                <input
+                  type="text"
+                  value={editValues.phone}
+                  onChange={(event) => handleEditChange('phone', event.target.value)}
+                  placeholder="Enter your phone number"
+                  className="h-12 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                />
+              </div>
+
+              {normalizeValue(editUser.role).toLowerCase() === 'teacher' && (
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Subject</label>
+                  <input
+                    type="text"
+                    list="edit-subject-options"
+                    value={editValues.subject}
+                    onChange={(event) => handleEditChange('subject', event.target.value)}
+                    placeholder="Mathematics"
+                    className="h-12 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  />
+                  <datalist id="edit-subject-options">
+                    {subjectOptions.map((subject) => (
+                      <option key={subject} value={subject} />
+                    ))}
+                  </datalist>
+                </div>
+              )}
+
+              {normalizeValue(editUser.role).toLowerCase() === 'student' && (
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Grade</label>
+                  <select
+                    value={editValues.gradeId}
+                    onChange={(event) => handleEditChange('gradeId', event.target.value)}
+                    className="h-12 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  >
+                    <option value="">Select grade</option>
+                    {gradeOptions.map((grade) => (
+                      <option key={grade.id} value={grade.id}>
+                        {grade.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {editError && <p className="text-sm text-red-600">{editError}</p>}
+
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={closeEditModal}
+                  className="h-12 flex-1 rounded-[10px] bg-[#f1f3f8] text-sm font-semibold text-[#5b739f]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updateUserMutation.isPending}
+                  className="h-12 flex-1 rounded-[10px] bg-[#1f3f93] text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {updateUserMutation.isPending ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isAssignOpen && selectedUser && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[#0a1d4a]/30 p-3">
+          <div className="max-h-[95vh] w-full max-w-[760px] overflow-y-auto rounded-xl border border-[#d6e3fb] bg-white p-6">
+            <form className="space-y-5" onSubmit={handleSaveAssignments}>
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="text-[34px] font-semibold leading-none text-[#1f3f93]">
+                    Manage Class Assignments
+                  </h2>
+                  <p className="mt-2 text-sm text-[#6f84b4]">
+                    {normalizeValue(selectedUser.role).toLowerCase() === 'teacher'
+                      ? 'Assign classes for teaching'
+                      : 'Assign student to classes'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeAssignModal}
+                  className="text-[#6f84b4] transition hover:text-[#1f3f93]"
+                >
+                  <X size={22} />
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-[#d6e3fb] bg-[#f3f7ff] p-4">
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#1f3f93] text-base font-semibold text-white">
+                    {getInitials(selectedUser.name)}
+                  </span>
+                  <div>
+                    <p className="text-xl font-semibold leading-none text-[#1f3f93]">{selectedUser.name}</p>
+                    <p className="mt-1 text-sm text-[#5f79af]">
+                      {selectedUser.email && selectedUser.email !== 'N/A' ? selectedUser.email : selectedUser.phone}
+                    </p>
+                    <p className="mt-1 text-sm font-medium capitalize text-[#1f4ca8]">{selectedUser.role}</p>
+                  </div>
+                </div>
+              </div>
+
+              {normalizeValue(selectedUser.role).toLowerCase() === 'student' ? (
+                <div className="rounded-xl border border-[#efd88d] bg-[#fff9e9] p-4 text-[#99640a]">
+                  Students can be assigned to one grade and multiple subjects.
+                </div>
+              ) : (
+                <div className="rounded-xl border border-[#efd88d] bg-[#fff9e9] p-4 text-[#99640a]">
+                  Teachers can be assigned to multiple grades but only one subject.
+                </div>
+              )}
+
+              <div>
+                <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">
+                  Currently Assigned
+                </h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  {normalizeValue(selectedUser.role).toLowerCase() === 'student' &&
+                    normalizeValue(assignmentValues.gradeId) &&
+                    findGradeById(assignmentValues.gradeId) && (
+                      <span className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white">
+                        {findGradeById(assignmentValues.gradeId)?.name}
+                      </span>
+                    )}
+                  {normalizeValue(selectedUser.role).toLowerCase() === 'teacher' &&
+                    assignmentValues.gradeIds.map((gradeId) => findGradeById(gradeId)).filter(Boolean).map((grade) => (
+                      <span
+                        key={`assigned-grade-${grade.id}`}
+                        className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white"
+                      >
+                        {grade.name}
+                      </span>
+                    ))}
+                  {normalizeValue(selectedUser.role).toLowerCase() === 'teacher' &&
+                    normalizeValue(assignmentValues.subject) && (
+                      <span className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white">
+                        {assignmentValues.subject}
+                      </span>
+                    )}
+                  {normalizeValue(selectedUser.role).toLowerCase() === 'student' &&
+                    assignmentValues.subjects.map((subject) => (
+                      <span
+                        key={`assigned-subject-${subject}`}
+                        className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white"
+                      >
+                        {subject}
+                      </span>
+                    ))}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Classes</h3>
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                  {gradeOptions.map((grade) => {
+                    const isTeacher = normalizeValue(selectedUser.role).toLowerCase() === 'teacher';
+                    const isSelected = isTeacher
+                      ? assignmentValues.gradeIds.map(String).includes(String(grade.id))
+                      : normalizeValue(assignmentValues.gradeId) === normalizeValue(grade.id);
+
+                    return (
+                      <button
+                        key={grade.id}
+                        type="button"
+                        onClick={() => {
+                          if (isTeacher) {
+                            toggleTeacherGrade(grade.id);
+                          } else {
+                            setAssignmentValues((prev) => ({ ...prev, gradeId: String(grade.id) }));
+                          }
+                        }}
+                        className={`rounded-xl border px-3 py-3 text-left transition ${
+                          isSelected
+                            ? 'border-[#1f3f93] bg-[#edf3ff] text-[#1f3f93]'
+                            : 'border-[#d6e3fb] bg-white text-[#4f6695]'
+                        }`}
+                      >
+                        <p className="text-lg font-semibold">{grade.name}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {normalizeValue(selectedUser.role).toLowerCase() === 'student' ? (
+                <div>
+                  <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Subjects</h3>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    {subjectOptions.map((subject) => {
+                      const normalized = normalizeValue(subject);
+                      const isSelected = assignmentValues.subjects
+                        .map(normalizeValue)
+                        .includes(normalized);
+                      return (
+                        <button
+                          key={subject}
+                          type="button"
+                          onClick={() => toggleStudentSubject(subject)}
+                          className={`rounded-xl border px-3 py-3 text-left transition ${
+                            isSelected
+                              ? 'border-[#1f3f93] bg-[#edf3ff] text-[#1f3f93]'
+                              : 'border-[#d6e3fb] bg-white text-[#4f6695]'
+                          }`}
+                        >
+                          <p className="text-lg font-semibold">{subject}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Subjects</h3>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    {subjectOptions.map((subject) => {
+                      const normalized = normalizeValue(subject);
+                      const isSelected = normalizeValue(assignmentValues.subject) === normalized;
+                      return (
+                        <button
+                          key={subject}
+                          type="button"
+                          onClick={() =>
+                            setAssignmentValues((prev) => ({
+                              ...prev,
+                              subject: normalized,
+                            }))
+                          }
+                          className={`rounded-xl border px-3 py-3 text-left transition ${
+                            isSelected
+                              ? 'border-[#1f3f93] bg-[#edf3ff] text-[#1f3f93]'
+                              : 'border-[#d6e3fb] bg-white text-[#4f6695]'
+                          }`}
+                        >
+                          <p className="text-lg font-semibold">{subject}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {assignmentError && <p className="text-sm text-red-600">{assignmentError}</p>}
+
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={closeAssignModal}
+                  className="h-12 flex-1 rounded-[10px] bg-[#f1f3f8] text-sm font-semibold text-[#5b739f]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updateAssignmentMutation.isPending}
+                  className="h-12 flex-1 rounded-[10px] bg-[#1f3f93] text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {updateAssignmentMutation.isPending ? 'Saving...' : 'Save Assignments'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {isAddUserOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-[#0a1d4a]/30 p-3">

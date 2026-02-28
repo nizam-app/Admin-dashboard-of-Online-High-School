@@ -42,8 +42,15 @@ const normalizeUsers = (list) => {
     email: pick(user, ['email', 'mail'], 'N/A'),
     phone: pick(user, ['phone', 'mobile', 'phoneNumber'], 'N/A'),
     role: pick(user, ['role', 'userRole'], 'N/A'),
+    gradeId: pick(user, ['gradeId', 'grade_id'], null),
+    gradeLevel: pick(user, ['gradeLevel', 'grade_level'], null),
     grade: pick(user, ['grade', 'classGrade', 'studentGrade'], null),
+    subjectId: pick(user, ['subjectId', 'subject_id'], null),
     subject: pick(user, ['subject', 'teachingSubject', 'mainSubject'], null),
+    assignedGradeIds: Array.isArray(user?.assignedGradeIds) ? user.assignedGradeIds : [],
+    assignedGrades: Array.isArray(user?.assignedGrades) ? user.assignedGrades : [],
+    assignedSubjectIds: Array.isArray(user?.assignedSubjectIds) ? user.assignedSubjectIds : [],
+    assignedSubjects: Array.isArray(user?.assignedSubjects) ? user.assignedSubjects : [],
     assignedClasses: normalizeAssignedClasses(user),
     status: pick(user, ['status', 'userStatus'], 'N/A'),
     joinDate: pick(user, ['createdAt', 'joinDate', 'joinedAt'], null),
@@ -56,7 +63,7 @@ const extractStringArray = (value) => {
       .map((item) => {
         if (typeof item === 'string') return item;
         if (item && typeof item === 'object') {
-          return pick(item, ['name', 'title', 'label', 'value'], null);
+          return pick(item, ['name', 'subject', 'subjectName', 'title', 'label', 'value'], null);
         }
         return null;
       })
@@ -171,6 +178,29 @@ export const getUsers = async ({
 
 export const createUser = async (payload) => {
   const response = await http.post('/users', payload);
+  return response.data;
+};
+
+export const updateAdminUser = async (userId, payload) => {
+  try {
+    const response = await http.patch(`/admin/users/${userId}`, payload);
+    return response.data;
+  } catch (error) {
+    if (error?.response?.status === 404 || error?.response?.status === 405) {
+      const fallback = await http.put(`/admin/users/${userId}`, payload);
+      return fallback.data;
+    }
+    throw error;
+  }
+};
+
+export const updateAdminUserStatus = async (userId, status) => {
+  const response = await http.patch(`/admin/users/${userId}/status`, { status });
+  return response.data;
+};
+
+export const deleteAdminUser = async (userId) => {
+  const response = await http.delete(`/admin/users/${userId}`);
   return response.data;
 };
 
