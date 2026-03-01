@@ -1,11 +1,12 @@
 import { NavLink, Outlet, useLocation } from 'react-router';
-import { Gauge, Users } from 'lucide-react';
+import { BookOpen, Gauge, Users } from 'lucide-react';
 import logo from '../../assets/logo.png';
 import { useAuth } from '../../features/auth/context/AuthContext';
 
 const navItems = [
   { label: 'Dashboard', icon: Gauge, to: '/' },
   { label: 'User Management', icon: Users, to: '/users' },
+  { label: 'Classes & Content', icon: BookOpen, to: '/classes-content' },
 ];
 
 const DashboardLayout = () => {
@@ -14,7 +15,12 @@ const DashboardLayout = () => {
   const adminName = user?.name || 'Admin User';
   const adminPhone = user?.phone || '';
   const avatarLetter = adminName.charAt(0).toUpperCase() || 'A';
-  const pageTitle = location.pathname === '/users' ? 'User Management' : 'Dashboard Overview';
+  const pageTitleMap = {
+    '/': 'Dashboard Overview',
+    '/users': 'User Management',
+    '/classes-content': 'Classes & Content',
+  };
+  const pageTitle = pageTitleMap[location.pathname] || 'Dashboard Overview';
 
   return (
     <div className="min-h-screen bg-[#f3f7fe] text-[#17367a]">

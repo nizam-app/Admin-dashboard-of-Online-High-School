@@ -2,6 +2,7 @@ import { createBrowserRouter } from 'react-router';
 import DashboardLayout from '../layouts/DashboardLayout/DashboardLayout';
 import DashboardPage from '../features/dashboard/pages/DashboardPage';
 import UserManagementPage from '../features/users/pages/UserManagementPage';
+import ClassesContentPage from '../features/classes/pages/ClassesContentPage';
 import LoginPage from '../features/auth/pages/LoginPage';
 import RegisterPage from '../features/auth/pages/RegisterPage';
 import RequireAuth from '../features/auth/components/RequireAuth';
@@ -35,6 +36,10 @@ export const router = createBrowserRouter([
           {
             path: 'users',
             Component: UserManagementPage,
+          },
+          {
+            path: 'classes-content',
+            Component: ClassesContentPage,
           },
         ],
       },

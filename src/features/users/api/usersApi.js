@@ -112,30 +112,56 @@ const extractUsersList = (root) => {
   return [];
 };
 
-const extractPagination = (root, page, limit, usersLength) => {
+const extractPagination = (payload, root, page, limit, usersLength) => {
+  const topLevelPagination = pick(payload, ['pagination', 'meta'], {});
   const rootPagination = pick(root, ['pagination', 'meta'], {});
-  const nestedUsers = pick(root, ['users'], {});
-  const nestedPagination = pick(nestedUsers, ['pagination', 'meta'], {});
-  const source = (rootPagination && Object.keys(rootPagination).length && rootPagination) || nestedPagination || {};
+  const nestedUsersFromPayload = pick(payload, ['users'], {});
+  const nestedUsersFromRoot = pick(root, ['users'], {});
+  const nestedPaginationFromPayload = pick(nestedUsersFromPayload, ['pagination', 'meta'], {});
+  const nestedPaginationFromRoot = pick(nestedUsersFromRoot, ['pagination', 'meta'], {});
 
-  const total = pick(
-    source,
-    ['total', 'totalItems', 'count'],
-    pick(root, ['total', 'count'], usersLength)
-  );
-  const currentPage = pick(source, ['page', 'currentPage'], page);
-  const perPage = pick(source, ['limit', 'perPage'], limit);
-  const totalPages = pick(
-    source,
-    ['totalPages', 'pages'],
-    Math.max(1, Math.ceil((Number(total) || usersLength || 0) / (Number(perPage) || limit || 1)))
-  );
+  const source =
+    (topLevelPagination && Object.keys(topLevelPagination).length && topLevelPagination) ||
+    (rootPagination && Object.keys(rootPagination).length && rootPagination) ||
+    (nestedPaginationFromPayload &&
+      Object.keys(nestedPaginationFromPayload).length &&
+      nestedPaginationFromPayload) ||
+    nestedPaginationFromRoot ||
+    {};
+
+  const total =
+    Number(
+      pick(source, ['total', 'totalItems', 'count'], null) ??
+        pick(payload, ['total', 'count'], null) ??
+        pick(root, ['total', 'count'], null)
+    ) || usersLength;
+
+  const currentPage =
+    Number(
+      pick(source, ['page', 'currentPage'], null) ??
+        pick(payload, ['page', 'currentPage'], null) ??
+        pick(root, ['page', 'currentPage'], null)
+    ) || page;
+
+  const perPage =
+    Number(
+      pick(source, ['limit', 'perPage'], null) ??
+        pick(payload, ['limit', 'perPage'], null) ??
+        pick(root, ['limit', 'perPage'], null)
+    ) || limit;
+
+  const totalPages =
+    Number(
+      pick(source, ['totalPages', 'pages'], null) ??
+        pick(payload, ['totalPages', 'pages'], null) ??
+        pick(root, ['totalPages', 'pages'], null)
+    ) || Math.max(1, Math.ceil((Number(total) || usersLength || 0) / (Number(perPage) || limit || 1)));
 
   return {
-    total: Number(total) || usersLength,
-    page: Number(currentPage) || page,
-    limit: Number(perPage) || limit,
-    totalPages: Number(totalPages) || 1,
+    total,
+    page: currentPage,
+    limit: perPage,
+    totalPages,
   };
 };
 
@@ -151,10 +177,10 @@ export const getUsers = async ({
   });
 
   const payload = response?.data || {};
-  const root = payload?.data || payload;
+  const root = payload?.data ?? payload;
 
   const users = normalizeUsers(extractUsersList(root));
-  const pagination = extractPagination(root, page, limit, users.length);
+  const pagination = extractPagination(payload, root, page, limit, users.length);
   const gradesRaw = pick(root, ['grades', 'availableGrades', 'gradeOptions'], []);
   const subjectsRaw = pick(root, ['subjects', 'availableSubjects', 'subjectOptions'], []);
 

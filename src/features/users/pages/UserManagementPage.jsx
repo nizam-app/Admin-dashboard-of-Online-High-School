@@ -64,6 +64,24 @@ const getInitials = (name) => {
 
 const normalizeValue = (value) => String(value || '').trim();
 const uniqueList = (items) => Array.from(new Set((items || []).map(normalizeValue).filter(Boolean)));
+const parseAssignedClasses = (assignedClasses = []) => {
+  const gradeLabels = [];
+  const subjects = [];
+
+  (Array.isArray(assignedClasses) ? assignedClasses : []).forEach((entry) => {
+    const value = normalizeValue(entry);
+    if (!value || value.startsWith('+')) return;
+
+    const [rawGrade, rawSubject] = value.split('-').map((item) => normalizeValue(item));
+    if (rawGrade) gradeLabels.push(rawGrade);
+    if (rawSubject) subjects.push(rawSubject);
+  });
+
+  return {
+    gradeLabels: uniqueList(gradeLabels),
+    subjects: uniqueList(subjects),
+  };
+};
 
 const UserManagementPage = () => {
   const queryClient = useQueryClient();
@@ -515,14 +533,22 @@ const UserManagementPage = () => {
 
   const openAssignModal = (user) => {
     const role = normalizeValue(user?.role).toLowerCase();
-    const userAssignedSubjects = uniqueList(user?.assignedSubjects || []);
+    const parsedClasses = parseAssignedClasses(user?.assignedClasses || []);
+    const userAssignedSubjects = uniqueList([
+      ...(user?.assignedSubjects || []),
+      ...parsedClasses.subjects,
+    ]);
     const userAssignedGradeIds = uniqueList((user?.assignedGradeIds || []).map(String));
-    const userAssignedGrades = uniqueList(user?.assignedGrades || []);
+    const userAssignedGrades = uniqueList([
+      ...(user?.assignedGrades || []),
+      ...parsedClasses.gradeLabels,
+    ]);
 
     const defaultStudentGradeId =
       normalizeValue(user?.gradeId) ||
       normalizeValue(findGradeByLabel(user?.gradeLevel)?.id) ||
       normalizeValue(findGradeByLabel(user?.grade)?.id) ||
+      normalizeValue(findGradeByLabel(userAssignedGrades[0])?.id) ||
       '';
 
     const defaultTeacherGradeIds =
@@ -675,7 +701,7 @@ const UserManagementPage = () => {
           <button
             type="button"
             onClick={openAddUser}
-            className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-[#1f3f93] px-4 text-sm font-semibold text-white"
+            className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-[#1f3f93] px-4  font-semibold text-white"
           >
             <Plus size={16} />
             Add User
@@ -706,7 +732,7 @@ const UserManagementPage = () => {
             <thead className="bg-[#eef4ff] text-left text-[13px] font-semibold text-[#1f3f93]">
               <tr>
                 <th className="px-5 py-3">Name</th>
-                <th className="px-5 py-3">Email</th>
+                <th className="px-5 py-3">Phone</th>
                 <th className="px-5 py-3">Role</th>
                 <th className="px-5 py-3">Assigned Classes</th>
                 <th className="px-5 py-3">Status</th>
