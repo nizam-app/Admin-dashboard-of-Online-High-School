@@ -248,3 +248,106 @@ export const deleteGrade = async (gradeId) => {
   }
   return data;
 };
+
+const normalizeLessonItem = (item, index) => ({
+  id: pick(item, ['_id', 'id'], `lesson-${index}`),
+  title: String(pick(item, ['title', 'name'], 'Untitled')),
+  description: String(pick(item, ['description', 'details'], '')),
+  contentType: String(pick(item, ['contentType', 'type'], 'text')).toLowerCase(),
+  gradeLevel: String(pick(item, ['gradeLevel', 'grade'], '')),
+  subject: String(pick(item, ['subject', 'subjectName'], '')),
+  classId: pick(item, ['classId', 'class', 'class_id'], null),
+  fileUrl: pick(item, ['fileUrl', 'url', 'assetUrl'], null),
+  createdAt: pick(item, ['createdAt', 'created_at'], null),
+});
+
+const extractLessonList = (root) => {
+  if (Array.isArray(root)) return root;
+  const direct = pick(root, ['lessons', 'items', 'results', 'data', 'rows'], null);
+  if (Array.isArray(direct)) return direct;
+  if (direct && typeof direct === 'object') {
+    const nested = pick(direct, ['docs', 'items', 'results', 'rows', 'data'], null);
+    if (Array.isArray(nested)) return nested;
+  }
+  return [];
+};
+
+export const getLessons = async (params = {}) => {
+  let response;
+  try {
+    response = await http.get('/lesson', { params });
+  } catch (error) {
+    if (error?.response?.status === 404) {
+      response = await http.get('/lessons', { params });
+    } else {
+      throw error;
+    }
+  }
+  const payload = response?.data || {};
+  const root = payload?.data ?? payload;
+  const list = extractLessonList(root);
+  return list.map(normalizeLessonItem);
+};
+
+export const uploadLesson = async (payload) => {
+  const endpoints = ['/lesson', '/lessons'];
+  const makeFormData = () => {
+    const formData = new FormData();
+    Object.entries(payload || {}).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      if (key === 'file' || key === 'files') return;
+      if (value instanceof File) return;
+      if (Array.isArray(value)) return;
+      if (typeof value === 'object') {
+        formData.append(key, JSON.stringify(value));
+        return;
+      }
+      formData.append(key, String(value));
+    });
+
+    const files = Array.isArray(payload?.files)
+      ? payload.files.filter((f) => f instanceof File)
+      : payload?.file instanceof File
+        ? [payload.file]
+        : [];
+    for (const file of files) {
+      formData.append('files', file);
+    }
+    return formData;
+  };
+
+  let response;
+  let lastError;
+
+  for (const endpoint of endpoints) {
+    try {
+      response = await http.post(endpoint, makeFormData(), {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      lastError = null;
+      break;
+    } catch (error) {
+      lastError = error;
+      const status = error?.response?.status;
+      if (status === 404) continue;
+      throw error;
+    }
+  }
+
+  if (!response && lastError) {
+    throw lastError;
+  }
+
+  const data = response?.data;
+  if (data && typeof data === 'object') {
+    const successFlag = data.success ?? data.ok;
+    if (successFlag === false) {
+      const err = new Error(data.message || 'Upload lesson failed');
+      err.response = { data, status: response?.status };
+      throw err;
+    }
+  }
+  return data;
+};

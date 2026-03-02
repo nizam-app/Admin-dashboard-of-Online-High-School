@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FiEdit2, FiPlus, FiTrash2 } from 'react-icons/fi';
+import {
+  FiEdit2,
+  FiPlus,
+  FiTrash2,
+  FiUpload,
+} from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { getGrades, getUsers } from '../../users/api/usersApi';
 import {
@@ -12,6 +17,7 @@ import {
   deleteClass,
   getClasses,
   getSubjectsList,
+  uploadLesson,
   updateClass,
 } from '../api/classesApi';
 
@@ -39,6 +45,19 @@ const ClassesContentPage = () => {
   });
   const [newSubjectName, setNewSubjectName] = useState('');
   const [newGradeLabel, setNewGradeLabel] = useState('');
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef(null);
+  const [lessonValues, setLessonValues] = useState({
+    title: '',
+    contentType: 'pdf',
+    gradeId: '',
+    subjectId: '',
+    chapter: '',
+    description: '',
+    textContent: '',
+    quizJson: '',
+    file: null,
+  });
 
   const {
     data: classesFromApi = [],
@@ -153,6 +172,29 @@ const ClassesContentPage = () => {
     },
   });
 
+  const uploadLessonMutation = useMutation({
+    mutationFn: uploadLesson,
+    onSuccess: () => {
+      setClassActionError('');
+      setIsDragOver(false);
+      setLessonValues({
+        title: '',
+        contentType: 'pdf',
+        gradeId: '',
+        subjectId: '',
+        chapter: '',
+        description: '',
+        textContent: '',
+        quizJson: '',
+        file: null,
+      });
+      queryClient.invalidateQueries({ queryKey: ['classes-content-classes'] });
+    },
+    onError: (error) => {
+      setClassActionError(error?.response?.data?.message || 'Failed to upload lesson');
+    },
+  });
+
   const { data: usersForCount } = useQuery({
     queryKey: ['classes-content-student-counts'],
     queryFn: () =>
@@ -189,6 +231,17 @@ const ClassesContentPage = () => {
       .filter(Boolean);
     return Array.from(new Set([...fromApi, ...fromClasses]));
   }, [subjectsFromApi, classesFromApi]);
+
+  const subjectCatalog = useMemo(
+    () =>
+      (subjectsFromApi || [])
+        .map((item) => ({
+          id: String(item?.id || '').trim(),
+          name: String(item?.name || '').trim(),
+        }))
+        .filter((item) => item.id && item.name),
+    [subjectsFromApi]
+  );
 
   const classes = useMemo(
     () => (Array.isArray(classesFromApi) ? classesFromApi : []),
@@ -518,6 +571,77 @@ const ClassesContentPage = () => {
     });
   };
 
+  const handleUploadLesson = (event) => {
+    event.preventDefault();
+
+    const title = String(lessonValues.title || '').trim();
+    const contentType = String(lessonValues.contentType || '').trim().toLowerCase();
+    const gradeId = String(lessonValues.gradeId || '').trim();
+    const subjectId = String(lessonValues.subjectId || '').trim();
+    const chapter = String(lessonValues.chapter || '').trim();
+    const description = String(lessonValues.description || '').trim();
+    const textContent = String(lessonValues.textContent || '').trim();
+    const quizJson = String(lessonValues.quizJson || '').trim();
+
+    if (!title || !gradeId || !subjectId || !chapter) {
+      setClassActionError('Title, chapter, grade and subject are required for lesson upload.');
+      return;
+    }
+
+    if ((contentType === 'pdf' || contentType === 'video') && !lessonValues.file) {
+      setClassActionError('Please choose a file for PDF/Video lesson.');
+      return;
+    }
+
+    let quizPayload;
+    if (contentType === 'quiz' && quizJson) {
+      try {
+        quizPayload = JSON.parse(quizJson);
+      } catch {
+        setClassActionError('Quiz JSON is invalid. Please provide valid JSON.');
+        return;
+      }
+    }
+
+    const payload = {
+      title,
+      contentType,
+      gradeId,
+      subjectId,
+      chapter,
+      description: (contentType === 'text' && !description ? textContent : description) || undefined,
+      textContent: contentType === 'text' ? textContent : undefined,
+      quiz: contentType === 'quiz' ? quizPayload || quizJson : undefined,
+      file: contentType === 'pdf' || contentType === 'video' ? lessonValues.file : undefined,
+    };
+
+    uploadLessonMutation.mutate(payload, {
+      onSuccess: async () => {
+        await Swal.fire({
+          title: 'Uploaded',
+          text: 'Lesson uploaded successfully.',
+          icon: 'success',
+          confirmButtonColor: '#1f3f93',
+        });
+      },
+      onError: async (error) => {
+        const status = error?.response?.status;
+        const message = error?.response?.data?.message || error?.message || 'Failed to upload lesson';
+        await Swal.fire({
+          title: 'Upload Failed',
+          text: status ? `(${status}) ${message}` : message,
+          icon: 'error',
+          confirmButtonColor: '#1f3f93',
+        });
+      },
+    });
+  };
+
+  const handlePickedFile = (file) => {
+    if (!file) return;
+    setLessonValues((prev) => ({ ...prev, file }));
+  };
+
   return (
     <section className="flex flex-col gap-4">
       <div className="w-full max-w-[430px] rounded-[10px] border border-[#d6e3fb] bg-white p-1">
@@ -537,23 +661,27 @@ const ClassesContentPage = () => {
         </div>
       </div>
 
-      <div>
-        <button
-          type="button"
-          onClick={() => setIsCreateOpen(true)}
-          className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-[#1f3f93] px-5 font-semibold leading-none text-white"
-        >
-          <FiPlus size={16} />
-          Create Class
-        </button>
-      </div>
+      {activeTab === 'Classes' && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setIsCreateOpen(true)}
+            className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-[#1f3f93] px-5 font-semibold leading-none text-white"
+          >
+            <FiPlus size={16} />
+            Create Class
+          </button>
+        </div>
+      )}
 
+      {classActionError && (
+        <div className="rounded-[10px] border border-[#f5d0d0] bg-[#fff5f5] p-3 text-sm text-red-600">
+          {classActionError}
+        </div>
+      )}
+
+      {activeTab === 'Classes' && (
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        {classActionError && (
-          <div className="rounded-[10px] border border-[#f5d0d0] bg-[#fff5f5] p-3 text-sm text-red-600 xl:col-span-3">
-            {classActionError}
-          </div>
-        )}
         {isClassesLoading && (
           <div className="rounded-[10px] border border-[#d6e3fb] bg-white p-4 text-sm text-[#5f79af]">
             Loading classes...
@@ -638,7 +766,184 @@ const ClassesContentPage = () => {
           );
         })}
       </div>
+      )}
 
+      {activeTab === 'Content Library' && (
+        <div className="space-y-4">
+          <section className="rounded-[10px] border border-[#d6e3fb] bg-white p-4">
+            <h3 className="text-[32px] font-semibold text-[#1f3f93]">Upload New Content</h3>
+
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setIsDragOver(true);
+              }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setIsDragOver(false);
+                const file = event.dataTransfer?.files?.[0];
+                handlePickedFile(file);
+              }}
+              className={`mt-4 rounded-[12px] border-2 border-dashed p-8 text-center ${
+                isDragOver ? 'border-[#1f3f93] bg-[#eef4ff]' : 'border-[#cfe0ff] bg-[#f8fbff]'
+              }`}
+            >
+              <FiUpload size={42} className="mx-auto text-[#5b9cff]" />
+              <p className="mt-3 text-[32px] text-[#17367a]">
+                Drag and drop files here, or click to browse
+              </p>
+              <p className="mt-1 text-[22px] text-[#6f84b4]">Supports PDF, MP4, DOCX, and more</p>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+                className="mt-4 h-10 rounded-[10px] bg-[#1f3f93] px-6 text-[22px] font-semibold text-white"
+              >
+                Choose Files
+              </button>
+              {lessonValues.file && (
+                <p className="mt-3 text-[22px] text-[#1f3f93]">Selected: {lessonValues.file.name}</p>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept={lessonValues.contentType === 'pdf' ? '.pdf' : lessonValues.contentType === 'video' ? 'video/*' : '*/*'}
+                onChange={(event) => handlePickedFile(event.target.files?.[0])}
+              />
+            </div>
+
+            <form className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-5" onSubmit={handleUploadLesson}>
+              <input
+                type="text"
+                value={lessonValues.title}
+                onChange={(event) =>
+                  setLessonValues((prev) => ({ ...prev, title: event.target.value }))
+                }
+                placeholder="Title"
+                className="h-11 rounded-[10px] border border-[#d6e3fb] px-3 text-sm text-[#17367a]"
+              />
+              <input
+                type="text"
+                value={lessonValues.chapter}
+                onChange={(event) =>
+                  setLessonValues((prev) => ({ ...prev, chapter: event.target.value }))
+                }
+                placeholder="Chapter"
+                className="h-11 rounded-[10px] border border-[#d6e3fb] px-3 text-sm text-[#17367a]"
+              />
+              <select
+                value={lessonValues.contentType}
+                onChange={(event) =>
+                  setLessonValues((prev) => ({
+                    ...prev,
+                    contentType: event.target.value,
+                    file: null,
+                    textContent: event.target.value === 'text' ? prev.textContent : '',
+                    quizJson: event.target.value === 'quiz' ? prev.quizJson : '',
+                  }))
+                }
+                className="h-11 rounded-[10px] border border-[#d6e3fb] px-3 text-sm text-[#17367a]"
+              >
+                <option value="pdf">PDF Document</option>
+                <option value="video">Video Lesson</option>
+                <option value="text">Text Content</option>
+                <option value="quiz">Quiz/Test</option>
+              </select>
+              <select
+                value={lessonValues.gradeId}
+                onChange={(event) =>
+                  setLessonValues((prev) => ({ ...prev, gradeId: event.target.value }))
+                }
+                className="h-11 rounded-[10px] border border-[#d6e3fb] px-3 text-sm text-[#17367a]"
+              >
+                <option value="">Select Grade</option>
+                {gradeOptions.map((grade) => (
+                  <option key={grade.id} value={grade.id}>
+                    {grade.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={lessonValues.subjectId}
+                onChange={(event) =>
+                  setLessonValues((prev) => ({ ...prev, subjectId: event.target.value }))
+                }
+                className="h-11 rounded-[10px] border border-[#d6e3fb] px-3 text-sm text-[#17367a]"
+              >
+                <option value="">Select Subject</option>
+                {subjectCatalog.map((subject) => (
+                  <option key={subject.id} value={subject.id}>
+                    {subject.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="submit"
+                disabled={uploadLessonMutation.isPending}
+                className="h-11 rounded-[10px] bg-[#1f3f93] px-5 text-sm font-semibold leading-none text-white disabled:opacity-60"
+              >
+                {uploadLessonMutation.isPending ? 'Uploading...' : 'Upload Lesson'}
+              </button>
+            </form>
+
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <textarea
+                rows={3}
+                value={lessonValues.description}
+                onChange={(event) =>
+                  setLessonValues((prev) => ({ ...prev, description: event.target.value }))
+                }
+                placeholder="Description (optional)"
+                className="w-full rounded-[10px] border border-[#d6e3fb] px-3 py-2 text-sm text-[#17367a]"
+              />
+              {lessonValues.contentType === 'text' && (
+                <textarea
+                  rows={3}
+                  value={lessonValues.textContent}
+                  onChange={(event) =>
+                    setLessonValues((prev) => ({ ...prev, textContent: event.target.value }))
+                  }
+                  placeholder="Text content"
+                  className="w-full rounded-[10px] border border-[#d6e3fb] px-3 py-2 text-sm text-[#17367a]"
+                />
+              )}
+              {lessonValues.contentType === 'quiz' && (
+                <textarea
+                  rows={3}
+                  value={lessonValues.quizJson}
+                  onChange={(event) =>
+                    setLessonValues((prev) => ({ ...prev, quizJson: event.target.value }))
+                  }
+                  placeholder='Quiz JSON: {"questions":[...]}'
+                  className="w-full rounded-[10px] border border-[#d6e3fb] px-3 py-2 text-sm text-[#17367a]"
+                />
+              )}
+            </div>
+          </section>
+
+        </div>
+      )}
+
+      {activeTab === 'Assignments' && (
+        <div className="rounded-[10px] border border-[#d6e3fb] bg-white p-4 text-sm text-[#5f79af]">
+          Assignments content will be available after backend integration.
+        </div>
+      )}
+
+      {activeTab === 'Classes' && (
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <section className="rounded-[10px] border border-[#d6e3fb] bg-white p-4">
           <div className="mb-3 flex items-center justify-between">
@@ -712,6 +1017,7 @@ const ClassesContentPage = () => {
           </div>
         </section>
       </div>
+      )}
 
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-[#0a1d4a]/30 p-3">
