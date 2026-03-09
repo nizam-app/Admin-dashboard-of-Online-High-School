@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router';
-import { BookOpen, Gauge, Users } from 'lucide-react';
+import { BarChart3, BookOpen, Gauge, Users } from 'lucide-react';
 import logo from '../../assets/logo.png';
 import { useAuth } from '../../features/auth/context/AuthContext';
 
@@ -7,6 +7,7 @@ const navItems = [
   { label: 'Dashboard', icon: Gauge, to: '/' },
   { label: 'User Management', icon: Users, to: '/users' },
   { label: 'Classes & Content', icon: BookOpen, to: '/classes-content' },
+  { label: 'Analytics', icon: BarChart3, to: '/analytics' },
 ];
 
 const DashboardLayout = () => {
@@ -19,8 +20,11 @@ const DashboardLayout = () => {
     '/': 'Dashboard Overview',
     '/users': 'User Management',
     '/classes-content': 'Classes & Content',
+    '/analytics': 'Analytics',
   };
-  const pageTitle = pageTitleMap[location.pathname] || 'Dashboard Overview';
+  const pageTitle = location.pathname.startsWith('/analytics')
+    ? 'Analytics'
+    : pageTitleMap[location.pathname] || 'Dashboard Overview';
 
   return (
     <div className="min-h-screen bg-[#f3f7fe] text-[#17367a]">

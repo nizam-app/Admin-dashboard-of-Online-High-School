@@ -10,6 +10,20 @@ const pick = (source, keys, fallback = null) => {
   return fallback;
 };
 
+const normalizeId = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const v = String(value).trim();
+    return v || null;
+  }
+  if (typeof value === 'object') {
+    if (value.$oid) return normalizeId(value.$oid);
+    if (value._id) return normalizeId(value._id);
+    if (value.id) return normalizeId(value.id);
+  }
+  return null;
+};
+
 const normalizeUsers = (list) => {
   if (!Array.isArray(list)) return [];
 
@@ -37,19 +51,23 @@ const normalizeUsers = (list) => {
   };
 
   return list.map((user, index) => ({
-    id: pick(user, ['_id', 'id'], `row-${index}`),
+    id: normalizeId(pick(user, ['_id', 'id'], null)) || `row-${index}`,
     name: pick(user, ['name', 'fullName', 'username'], 'N/A'),
     email: pick(user, ['email', 'mail'], 'N/A'),
     phone: pick(user, ['phone', 'mobile', 'phoneNumber'], 'N/A'),
     role: pick(user, ['role', 'userRole'], 'N/A'),
-    gradeId: pick(user, ['gradeId', 'grade_id'], null),
+    gradeId: normalizeId(pick(user, ['gradeId', 'grade_id'], null)),
     gradeLevel: pick(user, ['gradeLevel', 'grade_level'], null),
     grade: pick(user, ['grade', 'classGrade', 'studentGrade'], null),
-    subjectId: pick(user, ['subjectId', 'subject_id'], null),
+    subjectId: normalizeId(pick(user, ['subjectId', 'subject_id'], null)),
     subject: pick(user, ['subject', 'teachingSubject', 'mainSubject'], null),
-    assignedGradeIds: Array.isArray(user?.assignedGradeIds) ? user.assignedGradeIds : [],
+    assignedGradeIds: Array.isArray(user?.assignedGradeIds)
+      ? user.assignedGradeIds.map(normalizeId).filter(Boolean)
+      : [],
     assignedGrades: Array.isArray(user?.assignedGrades) ? user.assignedGrades : [],
-    assignedSubjectIds: Array.isArray(user?.assignedSubjectIds) ? user.assignedSubjectIds : [],
+    assignedSubjectIds: Array.isArray(user?.assignedSubjectIds)
+      ? user.assignedSubjectIds.map(normalizeId).filter(Boolean)
+      : [],
     assignedSubjects: Array.isArray(user?.assignedSubjects) ? user.assignedSubjects : [],
     assignedClasses: normalizeAssignedClasses(user),
     status: pick(user, ['status', 'userStatus'], 'N/A'),

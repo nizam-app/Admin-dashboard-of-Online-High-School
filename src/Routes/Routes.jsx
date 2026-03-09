@@ -3,6 +3,10 @@ import DashboardLayout from '../layouts/DashboardLayout/DashboardLayout';
 import DashboardPage from '../features/dashboard/pages/DashboardPage';
 import UserManagementPage from '../features/users/pages/UserManagementPage';
 import ClassesContentPage from '../features/classes/pages/ClassesContentPage';
+import AnalyticsPage from '../features/analytics/pages/AnalyticsPage';
+import AnalyticsOverviewPage from '../features/analytics/pages/AnalyticsOverviewPage';
+import AnalyticsStudentProgressPage from '../features/analytics/pages/AnalyticsStudentProgressPage';
+import AnalyticsTeacherActivityPage from '../features/analytics/pages/AnalyticsTeacherActivityPage';
 import LoginPage from '../features/auth/pages/LoginPage';
 import RegisterPage from '../features/auth/pages/RegisterPage';
 import RequireAuth from '../features/auth/components/RequireAuth';
@@ -40,6 +44,24 @@ export const router = createBrowserRouter([
           {
             path: 'classes-content',
             Component: ClassesContentPage,
+          },
+          {
+            path: 'analytics',
+            Component: AnalyticsPage,
+            children: [
+              {
+                index: true,
+                Component: AnalyticsOverviewPage,
+              },
+              {
+                path: 'student-progress',
+                Component: AnalyticsStudentProgressPage,
+              },
+              {
+                path: 'teacher-activity',
+                Component: AnalyticsTeacherActivityPage,
+              },
+            ],
           },
         ],
       },

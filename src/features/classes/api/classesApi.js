@@ -13,6 +13,17 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const toObjectId = (value) => {
+  if (!value) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+  if (typeof value === 'object') {
+    if (value.$oid) return String(value.$oid).trim();
+    if (value._id) return toObjectId(value._id);
+    if (value.id) return toObjectId(value.id);
+  }
+  return '';
+};
+
 const isAbsoluteUrl = (value) => /^https?:\/\//i.test(String(value || '').trim());
 
 const getApiOrigin = () => {
@@ -43,12 +54,9 @@ export const resolveLessonDownloadUrl = (input) => {
 
 const normalizeClassItem = (item, index) => {
   const rawId = pick(item, ['_id', 'id', 'classId', 'class_id'], null);
-  const normalizedId =
-    typeof rawId === 'string'
-      ? rawId
-      : rawId && typeof rawId === 'object' && rawId.$oid
-        ? String(rawId.$oid)
-        : null;
+  const normalizedId = toObjectId(rawId) || null;
+  const gradeId = toObjectId(pick(item, ['gradeId', 'grade_id'], null));
+  const subjectId = toObjectId(pick(item, ['subjectId', 'subject_id'], null));
 
   const studentsRaw = pick(item, ['students', 'studentIds'], []);
   const teacherRaw = pick(item, ['teacher', 'assignedTeacher'], null);
@@ -69,6 +77,8 @@ const normalizeClassItem = (item, index) => {
   return {
     id: normalizedId || `class-${index}`,
     deleteId: normalizedId,
+    gradeId,
+    subjectId,
     subject: String(pick(item, ['subject', 'subjectName', 'title'], 'N/A')),
     grade: String(pick(item, ['gradeLevel', 'grade', 'classGrade'], 'N/A')),
     students: studentsCount,
@@ -558,9 +568,62 @@ export const getAssignmentSubmissions = async (assignmentId) => {
   return response?.data?.data ?? response?.data;
 };
 
+export const createAssignment = async (payload = {}) => {
+  const formData = new FormData();
+
+  Object.entries(payload || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    if (key === 'files') return;
+    formData.append(key, String(value));
+  });
+
+  const files = Array.isArray(payload?.files) ? payload.files : [];
+  files.forEach((file) => {
+    if (file instanceof File) formData.append('files', file);
+  });
+
+  const response = await http.post('/admin/assignments', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+
+  const data = response?.data;
+  if (data && typeof data === 'object') {
+    const successFlag = data.success ?? data.ok;
+    if (successFlag === false) {
+      const err = new Error(data.message || 'Create assignment failed');
+      err.response = { data, status: response?.status };
+      throw err;
+    }
+  }
+  return data;
+};
+
 export const updateAssignment = async (assignmentId, payload) => {
   const id = String(assignmentId || '').trim();
-  const response = await http.patch(`/admin/assignments/${encodeURIComponent(id)}`, payload);
+  const formData = new FormData();
+
+  Object.entries(payload || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    if (key === 'files') return;
+    if (Array.isArray(value)) {
+      formData.append(key, JSON.stringify(value));
+      return;
+    }
+    formData.append(key, String(value));
+  });
+
+  const files = Array.isArray(payload?.files) ? payload.files : [];
+  files.forEach((file) => {
+    if (file instanceof File) formData.append('files', file);
+  });
+
+  const response = await http.patch(`/admin/assignments/${encodeURIComponent(id)}`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
   const data = response?.data;
   if (data && typeof data === 'object') {
     const successFlag = data.success ?? data.ok;

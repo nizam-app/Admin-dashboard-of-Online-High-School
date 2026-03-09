@@ -38,19 +38,18 @@ const renderAssignedClasses = (classes) => {
     return <span className="text-xs text-[#7b91be]">N/A</span>;
   }
 
-  const first = classes[0];
-  const extra = classes.length - 1;
+  const normalized = uniqueListCaseInsensitive(classes);
 
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="rounded-md border border-[#c8daf8] bg-[#eef4ff] px-2 py-0.5 text-xs text-[#1f4ca8]">
-        {first}
-      </span>
-      {extra > 0 && (
-        <span className="rounded-md border border-[#c8daf8] bg-[#eef4ff] px-2 py-0.5 text-xs text-[#1f4ca8]">
-          +{extra}
+    <div className="flex flex-wrap items-center gap-1.5">
+      {normalized.map((item) => (
+        <span
+          key={`assigned-class-${item}`}
+          className="rounded-md border border-[#c8daf8] bg-[#eef4ff] px-2 py-0.5 text-xs text-[#1f4ca8]"
+        >
+          {item}
         </span>
-      )}
+      ))}
     </div>
   );
 };
@@ -62,8 +61,33 @@ const getInitials = (name) => {
   return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
 };
 
-const normalizeValue = (value) => String(value || '').trim();
+const normalizeValue = (value) => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+  if (typeof value === 'object') {
+    if (value.$oid) return normalizeValue(value.$oid);
+    if (value._id) return normalizeValue(value._id);
+    if (value.id) return normalizeValue(value.id);
+    if (value.name) return normalizeValue(value.name);
+    if (value.label) return normalizeValue(value.label);
+    return '';
+  }
+  return String(value).trim();
+};
 const uniqueList = (items) => Array.from(new Set((items || []).map(normalizeValue).filter(Boolean)));
+const normalizeKey = (value) => normalizeValue(value).toLowerCase();
+const uniqueListCaseInsensitive = (items = []) => {
+  const seen = new Set();
+  const out = [];
+  (items || []).forEach((item) => {
+    const value = normalizeValue(item);
+    const key = normalizeKey(value);
+    if (!value || seen.has(key)) return;
+    seen.add(key);
+    out.push(value);
+  });
+  return out;
+};
 const parseAssignedClasses = (assignedClasses = []) => {
   const gradeLabels = [];
   const subjects = [];
@@ -72,9 +96,13 @@ const parseAssignedClasses = (assignedClasses = []) => {
     const value = normalizeValue(entry);
     if (!value || value.startsWith('+')) return;
 
-    const [rawGrade, rawSubject] = value.split('-').map((item) => normalizeValue(item));
-    if (rawGrade) gradeLabels.push(rawGrade);
-    if (rawSubject) subjects.push(rawSubject);
+    const separatorIndex = value.indexOf('-');
+    const rawGrade = separatorIndex >= 0 ? value.slice(0, separatorIndex) : value;
+    const rawSubject = separatorIndex >= 0 ? value.slice(separatorIndex + 1) : '';
+    const gradeValue = normalizeValue(rawGrade);
+    const subjectValue = normalizeValue(rawSubject);
+    if (gradeValue) gradeLabels.push(gradeValue);
+    if (subjectValue) subjects.push(subjectValue);
   });
 
   return {
@@ -534,7 +562,7 @@ const UserManagementPage = () => {
   const openAssignModal = (user) => {
     const role = normalizeValue(user?.role).toLowerCase();
     const parsedClasses = parseAssignedClasses(user?.assignedClasses || []);
-    const userAssignedSubjects = uniqueList([
+    const userAssignedSubjects = uniqueListCaseInsensitive([
       ...(user?.assignedSubjects || []),
       ...parsedClasses.subjects,
     ]);
@@ -554,7 +582,7 @@ const UserManagementPage = () => {
     const defaultTeacherGradeIds =
       userAssignedGradeIds.length > 0
         ? userAssignedGradeIds
-        : uniqueList(userAssignedGrades.map((grade) => findGradeByLabel(grade)?.id));
+        : uniqueListCaseInsensitive(userAssignedGrades.map((grade) => findGradeByLabel(grade)?.id));
 
     const defaultTeacherSubject =
       normalizeValue(user?.subject) || normalizeValue(userAssignedSubjects[0] || '');
@@ -626,6 +654,7 @@ const UserManagementPage = () => {
         role: 'student',
         gradeId,
         gradeLevel: normalizeValue(grade.level || grade.name),
+        assignedSubjectIds: [],
         assignedSubjects: subjects,
       };
       updateAssignmentMutation.mutate({ userId: selectedUser.id, payload });
@@ -657,6 +686,60 @@ const UserManagementPage = () => {
     };
     updateAssignmentMutation.mutate({ userId: selectedUser.id, payload });
   };
+
+  const buildUserAssignedDisplay = (user) => {
+    const role = normalizeValue(user?.role).toLowerCase();
+    const fromClasses = uniqueListCaseInsensitive(user?.assignedClasses || []);
+
+    if (role === 'student') {
+      const gradeLabel = normalizeValue(user?.gradeLevel || user?.grade);
+      const subjects = uniqueListCaseInsensitive(user?.assignedSubjects || []);
+      const fromSubjects = gradeLabel
+        ? subjects.map((subject) => `${gradeLabel} - ${subject}`)
+        : subjects;
+      return uniqueListCaseInsensitive([...fromClasses, ...fromSubjects]);
+    }
+
+    if (role === 'teacher') {
+      const subject = normalizeValue(user?.subject);
+      const grades = uniqueListCaseInsensitive(user?.assignedGrades || []);
+      const fromTeacherAssignments = subject
+        ? grades.map((grade) => `${grade} - ${subject}`)
+        : [];
+      return uniqueListCaseInsensitive([...fromClasses, ...fromTeacherAssignments]);
+    }
+
+    return fromClasses;
+  };
+
+  const selectedUserRole = normalizeValue(selectedUser?.role).toLowerCase();
+  const selectedStudentSubjects = uniqueListCaseInsensitive(
+    (assignmentValues.subjects || []).map(normalizeValue)
+  );
+  const selectedTeacherGradeIds = uniqueListCaseInsensitive(
+    (assignmentValues.gradeIds || []).map(normalizeValue)
+  );
+  const selectedStudentGrade = findGradeById(assignmentValues.gradeId);
+  const selectedStudentGradeName = normalizeValue(selectedStudentGrade?.name);
+
+  const availableGradeOptions = gradeOptions.filter((grade) => {
+    const gradeId = normalizeValue(grade?.id);
+    const gradeName = normalizeValue(grade?.name);
+    if (!gradeId) return false;
+    if (selectedUserRole === 'teacher') return !selectedTeacherGradeIds.includes(gradeId);
+    if (selectedUserRole === 'student') {
+      const selectedGradeId = normalizeValue(assignmentValues.gradeId);
+      return selectedGradeId !== gradeId && normalizeKey(selectedStudentGradeName) !== normalizeKey(gradeName);
+    }
+    return true;
+  });
+
+  const availableStudentSubjects = uniqueListCaseInsensitive(subjectOptions.map(normalizeValue)).filter(
+    (subject) => !selectedStudentSubjects.some((s) => normalizeKey(s) === normalizeKey(subject))
+  );
+  const availableTeacherSubjects = uniqueListCaseInsensitive(subjectOptions.map(normalizeValue)).filter(
+    (subject) => normalizeKey(assignmentValues.subject) !== normalizeKey(subject)
+  );
 
   return (
     <section className="flex flex-col gap-4">
@@ -783,7 +866,7 @@ const UserManagementPage = () => {
                       </td>
                       <td className="px-5 py-4 text-[#4f6695]">{emailOrPhone}</td>
                       <td className="px-5 py-4">{user.role}</td>
-                      <td className="px-5 py-4">{renderAssignedClasses(user.assignedClasses)}</td>
+                      <td className="px-5 py-4">{renderAssignedClasses(buildUserAssignedDisplay(user))}</td>
                       <td className="px-5 py-4">
                         <span
                           className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
@@ -1023,36 +1106,50 @@ const UserManagementPage = () => {
                   Currently Assigned
                 </h3>
                 <div className="flex flex-wrap items-center gap-2">
-                  {normalizeValue(selectedUser.role).toLowerCase() === 'student' &&
+                  {selectedUserRole === 'student' &&
                     normalizeValue(assignmentValues.gradeId) &&
                     findGradeById(assignmentValues.gradeId) && (
                       <span className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white">
                         {findGradeById(assignmentValues.gradeId)?.name}
                       </span>
                     )}
-                  {normalizeValue(selectedUser.role).toLowerCase() === 'teacher' &&
-                    assignmentValues.gradeIds.map((gradeId) => findGradeById(gradeId)).filter(Boolean).map((grade) => (
-                      <span
+                  {selectedUserRole === 'teacher' &&
+                    assignmentValues.gradeIds
+                      .map((gradeId) => findGradeById(gradeId))
+                      .filter(Boolean)
+                      .map((grade) => (
+                      <button
                         key={`assigned-grade-${grade.id}`}
+                        type="button"
+                        onClick={() => toggleTeacherGrade(grade.id)}
                         className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white"
+                        title="Remove grade"
                       >
-                        {grade.name}
-                      </span>
+                        {grade.name} x
+                      </button>
                     ))}
-                  {normalizeValue(selectedUser.role).toLowerCase() === 'teacher' &&
+                  {selectedUserRole === 'teacher' &&
                     normalizeValue(assignmentValues.subject) && (
-                      <span className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white">
-                        {assignmentValues.subject}
-                      </span>
-                    )}
-                  {normalizeValue(selectedUser.role).toLowerCase() === 'student' &&
-                    assignmentValues.subjects.map((subject) => (
-                      <span
-                        key={`assigned-subject-${subject}`}
+                      <button
+                        type="button"
+                        onClick={() => setAssignmentValues((prev) => ({ ...prev, subject: '' }))}
                         className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white"
+                        title="Remove subject"
                       >
-                        {subject}
-                      </span>
+                        {assignmentValues.subject} x
+                      </button>
+                    )}
+                  {selectedUserRole === 'student' &&
+                    assignmentValues.subjects.map((subject) => (
+                      <button
+                        key={`assigned-subject-${subject}`}
+                        type="button"
+                        onClick={() => toggleStudentSubject(subject)}
+                        className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white"
+                        title="Remove subject"
+                      >
+                        {subject} x
+                      </button>
                     ))}
                 </div>
               </div>
@@ -1060,11 +1157,8 @@ const UserManagementPage = () => {
               <div>
                 <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Classes</h3>
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {gradeOptions.map((grade) => {
-                    const isTeacher = normalizeValue(selectedUser.role).toLowerCase() === 'teacher';
-                    const isSelected = isTeacher
-                      ? assignmentValues.gradeIds.map(String).includes(String(grade.id))
-                      : normalizeValue(assignmentValues.gradeId) === normalizeValue(grade.id);
+                  {availableGradeOptions.map((grade) => {
+                    const isTeacher = selectedUserRole === 'teacher';
 
                     return (
                       <button
@@ -1077,52 +1171,46 @@ const UserManagementPage = () => {
                             setAssignmentValues((prev) => ({ ...prev, gradeId: String(grade.id) }));
                           }
                         }}
-                        className={`rounded-xl border px-3 py-3 text-left transition ${
-                          isSelected
-                            ? 'border-[#1f3f93] bg-[#edf3ff] text-[#1f3f93]'
-                            : 'border-[#d6e3fb] bg-white text-[#4f6695]'
-                        }`}
+                        className="rounded-xl border border-[#d6e3fb] bg-white px-3 py-3 text-left text-[#4f6695] transition hover:border-[#1f3f93] hover:bg-[#edf3ff] hover:text-[#1f3f93]"
                       >
                         <p className="text-lg font-semibold">{grade.name}</p>
                       </button>
                     );
                   })}
+                  {availableGradeOptions.length === 0 && (
+                    <p className="col-span-full text-sm text-[#7b91be]">No remaining classes.</p>
+                  )}
                 </div>
               </div>
 
-              {normalizeValue(selectedUser.role).toLowerCase() === 'student' ? (
+              {selectedUserRole === 'student' ? (
                 <div>
                   <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Subjects</h3>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                    {subjectOptions.map((subject) => {
+                    {availableStudentSubjects.map((subject) => {
                       const normalized = normalizeValue(subject);
-                      const isSelected = assignmentValues.subjects
-                        .map(normalizeValue)
-                        .includes(normalized);
                       return (
                         <button
                           key={subject}
                           type="button"
                           onClick={() => toggleStudentSubject(subject)}
-                          className={`rounded-xl border px-3 py-3 text-left transition ${
-                            isSelected
-                              ? 'border-[#1f3f93] bg-[#edf3ff] text-[#1f3f93]'
-                              : 'border-[#d6e3fb] bg-white text-[#4f6695]'
-                          }`}
+                          className="rounded-xl border border-[#d6e3fb] bg-white px-3 py-3 text-left text-[#4f6695] transition hover:border-[#1f3f93] hover:bg-[#edf3ff] hover:text-[#1f3f93]"
                         >
-                          <p className="text-lg font-semibold">{subject}</p>
+                          <p className="text-lg font-semibold">{normalized}</p>
                         </button>
                       );
                     })}
+                    {availableStudentSubjects.length === 0 && (
+                      <p className="col-span-full text-sm text-[#7b91be]">No remaining subjects.</p>
+                    )}
                   </div>
                 </div>
               ) : (
                 <div>
                   <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Subjects</h3>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                    {subjectOptions.map((subject) => {
+                    {availableTeacherSubjects.map((subject) => {
                       const normalized = normalizeValue(subject);
-                      const isSelected = normalizeValue(assignmentValues.subject) === normalized;
                       return (
                         <button
                           key={subject}
@@ -1133,16 +1221,15 @@ const UserManagementPage = () => {
                               subject: normalized,
                             }))
                           }
-                          className={`rounded-xl border px-3 py-3 text-left transition ${
-                            isSelected
-                              ? 'border-[#1f3f93] bg-[#edf3ff] text-[#1f3f93]'
-                              : 'border-[#d6e3fb] bg-white text-[#4f6695]'
-                          }`}
+                          className="rounded-xl border border-[#d6e3fb] bg-white px-3 py-3 text-left text-[#4f6695] transition hover:border-[#1f3f93] hover:bg-[#edf3ff] hover:text-[#1f3f93]"
                         >
                           <p className="text-lg font-semibold">{subject}</p>
                         </button>
                       );
                     })}
+                    {availableTeacherSubjects.length === 0 && (
+                      <p className="col-span-full text-sm text-[#7b91be]">No remaining subjects.</p>
+                    )}
                   </div>
                 </div>
               )}

@@ -10,6 +10,7 @@ import {
 import Swal from 'sweetalert2';
 import { getGrades, getUsers } from '../../users/api/usersApi';
 import {
+  createAssignment,
   createClass,
   createGrade,
   createSubject,
@@ -38,7 +39,23 @@ const isMongoId = (value) => /^[a-f\d]{24}$/i.test(String(value || '').trim());
 const looksLikeId = (value) => /^[a-f\d]{24}$/i.test(String(value || '').trim());
 const LESSON_FILE_INPUT_ID = 'lesson-file-input';
 const LESSONS_PAGE_SIZE = 5;
-const ASSIGNMENTS_PAGE_SIZE = 10;
+const ASSIGNMENTS_PAGE_SIZE = 4;
+const formatDateTime = (value) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toISOString().slice(0, 16).replace('T', ' ');
+};
+const splitDueAt = (value) => {
+  if (!value) return { dueDate: '', dueTime: '' };
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return { dueDate: '', dueTime: '' };
+  const iso = date.toISOString();
+  return {
+    dueDate: iso.slice(0, 10),
+    dueTime: iso.slice(11, 16),
+  };
+};
 
 const ClassesContentPage = () => {
   const queryClient = useQueryClient();
@@ -65,6 +82,36 @@ const ClassesContentPage = () => {
   const [recentLessonsPage, setRecentLessonsPage] = useState(1);
   const [assignmentsPage, setAssignmentsPage] = useState(1);
   const [assignmentStatusFilter, setAssignmentStatusFilter] = useState('all');
+  const [isCreateAssignmentOpen, setIsCreateAssignmentOpen] = useState(false);
+  const [isAssignmentSubmissionsOpen, setIsAssignmentSubmissionsOpen] = useState(false);
+  const [isAssignmentSubmissionsLoading, setIsAssignmentSubmissionsLoading] = useState(false);
+  const [isEditAssignmentOpen, setIsEditAssignmentOpen] = useState(false);
+  const [editingAssignment, setEditingAssignment] = useState(null);
+  const [assignmentEditValues, setAssignmentEditValues] = useState({
+    title: '',
+    description: '',
+    dueDate: '',
+    dueTime: '',
+    points: '',
+    lateAllowed: false,
+    status: 'active',
+    files: [],
+  });
+  const [existingAssignmentFiles, setExistingAssignmentFiles] = useState([]);
+  const [removedAssignmentFiles, setRemovedAssignmentFiles] = useState([]);
+  const [assignmentSubmissionsData, setAssignmentSubmissionsData] = useState({
+    assignment: null,
+    submissions: [],
+  });
+  const [assignmentFormValues, setAssignmentFormValues] = useState({
+    classId: '',
+    title: '',
+    description: '',
+    dueDate: '',
+    dueTime: '',
+    points: '',
+    files: [],
+  });
   const fileInputRef = useRef(null);
   const [lessonValues, setLessonValues] = useState({
     title: '',
@@ -329,6 +376,31 @@ const ClassesContentPage = () => {
     },
   });
 
+  const createAssignmentMutation = useMutation({
+    mutationFn: createAssignment,
+    onSuccess: () => {
+      setClassActionError('');
+      setIsCreateAssignmentOpen(false);
+      setAssignmentFormValues({
+        classId: '',
+        title: '',
+        description: '',
+        dueDate: '',
+        dueTime: '',
+        points: '',
+        files: [],
+      });
+      setAssignmentsPage(1);
+      setAssignmentStatusFilter('all');
+      queryClient.invalidateQueries({ queryKey: ['classes-content-assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-content-assignments-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-content-classes'] });
+    },
+    onError: (error) => {
+      setClassActionError(error?.response?.data?.message || 'Failed to create assignment');
+    },
+  });
+
   const { data: usersForCount } = useQuery({
     queryKey: ['classes-content-student-counts'],
     queryFn: () =>
@@ -396,6 +468,20 @@ const ClassesContentPage = () => {
   const classes = useMemo(
     () => (Array.isArray(classesFromApi) ? classesFromApi : []),
     [classesFromApi]
+  );
+  const assignmentClassOptions = useMemo(
+    () =>
+      classes
+        .map((item) => ({
+          id: String(item?.deleteId || item?.id || '').trim(),
+          gradeId: String(item?.gradeId || '').trim(),
+          subjectId: String(item?.subjectId || '').trim(),
+          label: `${String(item?.grade || '').trim()} - ${String(item?.subject || '').trim()}`,
+        }))
+        .filter(
+          (item) => item.id && item.gradeId && item.subjectId && item.label && item.label !== ' - '
+        ),
+    [classes]
   );
   const recentLessons = useMemo(
     () => (Array.isArray(recentLessonsResponse?.items) ? recentLessonsResponse.items : []),
@@ -470,6 +556,14 @@ const ClassesContentPage = () => {
       setAssignmentsPage(totalPages);
     }
   }, [assignmentsPage, assignmentsPagination?.totalPages]);
+
+  useEffect(() => {
+    if (!isCreateAssignmentOpen) return;
+    if (assignmentFormValues.classId) return;
+    const defaultClassId = String(assignmentClassOptions?.[0]?.id || '').trim();
+    if (!defaultClassId) return;
+    setAssignmentFormValues((prev) => ({ ...prev, classId: defaultClassId }));
+  }, [isCreateAssignmentOpen, assignmentFormValues.classId, assignmentClassOptions]);
 
   const handleCreateClass = (event) => {
     event.preventDefault();
@@ -1069,27 +1163,25 @@ const ClassesContentPage = () => {
     const assignmentId = String(assignment?.id || '').trim();
     if (!assignmentId) return;
 
+    setIsAssignmentSubmissionsOpen(true);
+    setIsAssignmentSubmissionsLoading(true);
+    setAssignmentSubmissionsData({
+      assignment,
+      submissions: [],
+    });
+
     try {
       const payload = await getAssignmentSubmissions(assignmentId);
-      const submissions = Array.isArray(payload?.submissions) ? payload.submissions : [];
-      const topNames = submissions
-        .slice(0, 5)
-        .map((item) => String(item?.studentId?.name || 'Unknown'))
-        .join(', ');
-
-      await Swal.fire({
-        title: 'Submissions',
-        html: `
-          <div style="text-align:left">
-            <p><strong>Total submissions:</strong> ${submissions.length}</p>
-            <p><strong>Assignment:</strong> ${String(payload?.assignment?.title || assignment?.title || 'N/A')}</p>
-            <p><strong>Students:</strong> ${topNames || 'No submissions yet'}</p>
-          </div>
-        `,
-        icon: 'info',
-        confirmButtonColor: '#1f3f93',
+      setAssignmentSubmissionsData({
+        assignment: {
+          ...(assignment || {}),
+          ...(payload?.assignment || {}),
+        },
+        submissions: Array.isArray(payload?.submissions) ? payload.submissions : [],
       });
     } catch (error) {
+      setIsAssignmentSubmissionsOpen(false);
+      setAssignmentSubmissionsData({ assignment: null, submissions: [] });
       const status = error?.response?.status;
       const message = error?.response?.data?.message || error?.message || 'Failed to load submissions';
       await Swal.fire({
@@ -1098,34 +1190,158 @@ const ClassesContentPage = () => {
         icon: 'error',
         confirmButtonColor: '#1f3f93',
       });
+    } finally {
+      setIsAssignmentSubmissionsLoading(false);
     }
   };
 
-  const handleEditAssignment = async (assignment) => {
+  const closeAssignmentSubmissionsModal = () => {
+    if (isAssignmentSubmissionsLoading) return;
+    setIsAssignmentSubmissionsOpen(false);
+    setAssignmentSubmissionsData({ assignment: null, submissions: [] });
+  };
+
+  const submissionBadgeMeta = (submission) => {
+    const score = Number(submission?.grade?.score);
+    const letter = String(submission?.grade?.letter || '').trim();
+    if (Number.isFinite(score)) {
+      return {
+        label: letter ? `Graded - ${letter}` : 'Graded',
+        className: 'bg-[#daf6e6] text-[#008a3d]',
+      };
+    }
+
+    const status = String(submission?.status || '').trim().toLowerCase();
+    if (status === 'submitted') {
+      return {
+        label: 'Needs Grading',
+        className: 'bg-[#f8efc9] text-[#9f7a00]',
+      };
+    }
+
+    return {
+      label: 'Not Submitted',
+      className: 'bg-[#ffe5e5] text-[#d32f2f]',
+    };
+  };
+
+  const handleEditAssignment = (assignment) => {
     const assignmentId = String(assignment?.id || '').trim();
     if (!assignmentId) return;
 
-    const { value: nextTitle } = await Swal.fire({
-      title: 'Edit Assignment Title',
-      input: 'text',
-      inputLabel: 'Title',
-      inputValue: String(assignment?.title || ''),
-      showCancelButton: true,
-      confirmButtonText: 'Save',
-      confirmButtonColor: '#1f3f93',
-      inputValidator: (value) => (!String(value || '').trim() ? 'Title is required' : null),
-    });
+    const due = splitDueAt(assignment?.dueAt);
+    const existingFiles = Array.isArray(assignment?.attachments) ? assignment.attachments : [];
 
-    if (!nextTitle) return;
+    setEditingAssignment(assignment);
+    setAssignmentEditValues({
+      title: String(assignment?.title || ''),
+      description: String(assignment?.description || ''),
+      dueDate: due.dueDate,
+      dueTime: due.dueTime,
+      points: String(Number(assignment?.points || 0) || ''),
+      lateAllowed: Boolean(assignment?.lateAllowed),
+      status: String(assignment?.status || resolveAssignmentStatus(assignment) || 'active')
+        .trim()
+        .toLowerCase(),
+      files: [],
+    });
+    setExistingAssignmentFiles(existingFiles);
+    setRemovedAssignmentFiles([]);
+    setClassActionError('');
+    setIsEditAssignmentOpen(true);
+  };
+
+  const closeEditAssignmentModal = () => {
+    if (updateAssignmentMutation.isPending) return;
+    setIsEditAssignmentOpen(false);
+    setEditingAssignment(null);
+    setExistingAssignmentFiles([]);
+    setRemovedAssignmentFiles([]);
+    setAssignmentEditValues({
+      title: '',
+      description: '',
+      dueDate: '',
+      dueTime: '',
+      points: '',
+      lateAllowed: false,
+      status: 'active',
+      files: [],
+    });
+  };
+
+  const removeExistingAssignmentFile = (file) => {
+    const url = String(file?.url || '').trim();
+    const key = String(file?.storageKey || '').trim();
+    setRemovedAssignmentFiles((prev) => [...prev, { url, storageKey: key }]);
+    setExistingAssignmentFiles((prev) =>
+      prev.filter(
+        (item) =>
+          !(
+            String(item?.url || '').trim() === url &&
+            String(item?.storageKey || '').trim() === key
+          )
+      )
+    );
+  };
+
+  const handleUpdateAssignment = (event) => {
+    event.preventDefault();
+    if (!editingAssignment?.id) return;
+
+    const title = String(assignmentEditValues.title || '').trim();
+    const description = String(assignmentEditValues.description || '').trim();
+    const dueDate = String(assignmentEditValues.dueDate || '').trim();
+    const dueTime = String(assignmentEditValues.dueTime || '').trim();
+    const points = String(assignmentEditValues.points || '').trim();
+    const status = String(assignmentEditValues.status || '').trim().toLowerCase();
+    const files = Array.isArray(assignmentEditValues.files) ? assignmentEditValues.files : [];
+
+    if (!title || !dueDate || !points) {
+      setClassActionError('Title, due date and points are required.');
+      return;
+    }
+
+    const removeAttachmentUrls = removedAssignmentFiles
+      .map((item) => String(item?.url || '').trim())
+      .filter(Boolean);
+    const removeAttachmentKeys = removedAssignmentFiles
+      .map((item) => String(item?.storageKey || '').trim())
+      .filter(Boolean);
 
     updateAssignmentMutation.mutate(
-      { assignmentId, payload: { title: String(nextTitle).trim() } },
+      {
+        assignmentId: editingAssignment.id,
+        payload: {
+          title,
+          description,
+          dueDate,
+          dueTime: dueTime || undefined,
+          points,
+          lateAllowed: Boolean(assignmentEditValues.lateAllowed),
+          status: ['active', 'closed', 'draft'].includes(status) ? status : 'active',
+          removeAttachmentUrls,
+          removeAttachmentKeys,
+          files,
+        },
+      },
       {
         onSuccess: async () => {
+          closeEditAssignmentModal();
           await Swal.fire({
             title: 'Updated',
             text: 'Assignment updated successfully.',
             icon: 'success',
+            confirmButtonColor: '#1f3f93',
+          });
+        },
+        onError: async (error) => {
+          const statusCode = error?.response?.status;
+          const message =
+            error?.response?.data?.message || error?.message || 'Failed to update assignment';
+          await Swal.fire({
+            title: 'Update Failed',
+            text: statusCode ? `(${statusCode}) ${message}` : message,
+            icon: 'error',
             confirmButtonColor: '#1f3f93',
           });
         },
@@ -1190,6 +1406,95 @@ const ClassesContentPage = () => {
         });
       },
     });
+  };
+
+  const openCreateAssignmentModal = () => {
+    if (assignmentClassOptions.length === 0) {
+      Swal.fire({
+        title: 'No Valid Class Found',
+        text: 'No class has both grade and subject references. Please update class first.',
+        icon: 'warning',
+        confirmButtonColor: '#1f3f93',
+      });
+      return;
+    }
+
+    setClassActionError('');
+    setAssignmentFormValues({
+      classId: String(assignmentClassOptions?.[0]?.id || '').trim(),
+      title: '',
+      description: '',
+      dueDate: '',
+      dueTime: '',
+      points: '',
+      files: [],
+    });
+    setIsCreateAssignmentOpen(true);
+  };
+
+  const closeCreateAssignmentModal = () => {
+    if (createAssignmentMutation.isPending) return;
+    setIsCreateAssignmentOpen(false);
+  };
+
+  const handleAssignmentFormChange = (key, value) => {
+    setAssignmentFormValues((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleCreateAssignment = (event) => {
+    event.preventDefault();
+    setClassActionError('');
+
+    const classId = String(assignmentFormValues.classId || '').trim();
+    const title = String(assignmentFormValues.title || '').trim();
+    const description = String(assignmentFormValues.description || '').trim();
+    const dueDate = String(assignmentFormValues.dueDate || '').trim();
+    const dueTime = String(assignmentFormValues.dueTime || '').trim();
+    const points = String(assignmentFormValues.points || '').trim();
+    const files = Array.isArray(assignmentFormValues.files) ? assignmentFormValues.files : [];
+
+    if (!classId || !title || !dueDate || !points) {
+      setClassActionError('Class, title, due date and points are required.');
+      return;
+    }
+
+    const selectedClass = assignmentClassOptions.find((item) => item.id === classId);
+    if (!selectedClass?.gradeId || !selectedClass?.subjectId) {
+      setClassActionError('Selected class is missing grade/subject references. Please update class first.');
+      return;
+    }
+
+    createAssignmentMutation.mutate(
+      {
+        classId,
+        title,
+        description: description || undefined,
+        dueDate,
+        dueTime: dueTime || undefined,
+        points,
+        files,
+      },
+      {
+        onSuccess: async () => {
+          await Swal.fire({
+            title: 'Created',
+            text: 'Assignment created successfully.',
+            icon: 'success',
+            confirmButtonColor: '#1f3f93',
+          });
+        },
+        onError: async (error) => {
+          const status = error?.response?.status;
+          const message = error?.response?.data?.message || error?.message || 'Failed to create assignment';
+          await Swal.fire({
+            title: 'Create Failed',
+            text: status ? `(${status}) ${message}` : message,
+            icon: 'error',
+            confirmButtonColor: '#1f3f93',
+          });
+        },
+      }
+    );
   };
 
   return (
@@ -1615,6 +1920,17 @@ const ClassesContentPage = () => {
 
       {activeTab === 'Assignments' && (
         <div className="space-y-4">
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={openCreateAssignmentModal}
+              className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-[#1f3f93] px-4 font-semibold text-white"
+            >
+              <FiPlus size={16} />
+              Create Assignment
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {[
               { key: 'active', label: 'Active', value: Number(assignmentsStats?.active || 0) },
@@ -1714,6 +2030,50 @@ const ClassesContentPage = () => {
                           <p className="mt-3 text-sm text-[#5f79af]">
                             {assignment.description || 'No description provided.'}
                           </p>
+
+                          <div className="mt-3">
+                            <p className="text-sm font-semibold text-[#17367a]">Attachments</p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {Array.isArray(assignment?.attachments) &&
+                              assignment.attachments.length > 0 ? (
+                                assignment.attachments.map((file, index) => {
+                                  const fileUrl = resolveLessonDownloadUrl(file);
+                                  const fileName = String(
+                                    file?.originalName || file?.storageKey || `Attachment ${index + 1}`
+                                  );
+
+                                  if (!fileUrl) {
+                                    return (
+                                      <span
+                                        key={`${String(file?.url || file?.storageKey || index)}`}
+                                        className="inline-flex items-center gap-1 rounded-md border border-[#d6e3fb] bg-[#f8fbff] px-2 py-1 text-xs text-[#8aa0cb]"
+                                        title={fileName}
+                                      >
+                                        <FiDownload size={12} />
+                                        <span className="max-w-[220px] truncate">{fileName}</span>
+                                      </span>
+                                    );
+                                  }
+
+                                  return (
+                                    <a
+                                      key={`${String(file?.url || file?.storageKey || index)}`}
+                                      href={fileUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 rounded-md border border-[#d6e3fb] bg-[#f8fbff] px-2 py-1 text-xs text-[#1f3f93] hover:bg-[#eef4ff]"
+                                      title={`Open ${fileName}`}
+                                    >
+                                      <FiDownload size={12} />
+                                      <span className="max-w-[220px] truncate">{fileName}</span>
+                                    </a>
+                                  );
+                                })
+                              ) : (
+                                <span className="text-xs text-[#8aa0cb]">No attachments</span>
+                              )}
+                            </div>
+                          </div>
 
                           <div className="mt-4 grid grid-cols-1 gap-2 text-sm text-[#5f79af] md:grid-cols-3">
                             <p>
@@ -1828,6 +2188,455 @@ const ClassesContentPage = () => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {isCreateAssignmentOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[#0a1d4a]/30 p-3">
+          <div className="w-full max-w-[520px] rounded-xl border border-[#d6e3fb] bg-white p-6">
+            <form className="space-y-4" onSubmit={handleCreateAssignment}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-[24px] font-semibold text-[#1f3f93]">Create New Assignment</h2>
+                <button
+                  type="button"
+                  onClick={closeCreateAssignmentModal}
+                  className="text-[#6f84b4] hover:text-[#1f3f93]"
+                >
+                  x
+                </button>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Class *</label>
+                <select
+                  value={assignmentFormValues.classId}
+                  onChange={(event) => handleAssignmentFormChange('classId', event.target.value)}
+                  className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                >
+                  <option value="">Select class</option>
+                  {assignmentClassOptions.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+                {assignmentClassOptions.length === 0 && (
+                  <p className="mt-1 text-xs text-red-600">
+                    No eligible class found. Classes must have grade and subject references.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                  Assignment Title *
+                </label>
+                <input
+                  type="text"
+                  value={assignmentFormValues.title}
+                  onChange={(event) => handleAssignmentFormChange('title', event.target.value)}
+                  placeholder="e.g., Math Homework"
+                  className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Description</label>
+                <textarea
+                  rows={3}
+                  value={assignmentFormValues.description}
+                  onChange={(event) => handleAssignmentFormChange('description', event.target.value)}
+                  placeholder="Describe the assignment content..."
+                  className="w-full rounded-lg border border-[#d6e3fb] px-3 py-2 text-sm outline-none focus:border-[#1f3f93]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Due Date *</label>
+                  <input
+                    type="date"
+                    value={assignmentFormValues.dueDate}
+                    onChange={(event) => handleAssignmentFormChange('dueDate', event.target.value)}
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Due Time</label>
+                  <input
+                    type="time"
+                    value={assignmentFormValues.dueTime}
+                    onChange={(event) => handleAssignmentFormChange('dueTime', event.target.value)}
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Points *</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={assignmentFormValues.points}
+                  onChange={(event) => handleAssignmentFormChange('points', event.target.value)}
+                  placeholder="e.g., 100"
+                  className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Attach Files</label>
+                <input
+                  type="file"
+                  multiple
+                  onChange={(event) =>
+                    handleAssignmentFormChange('files', Array.from(event.target.files || []))
+                  }
+                  className="block w-full rounded-lg border border-dashed border-[#c8daf8] bg-[#f8fbff] px-3 py-3 text-sm text-[#4f6695]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 pt-1 md:grid-cols-[1fr_220px]">
+                <button
+                  type="button"
+                  onClick={closeCreateAssignmentModal}
+                  className="h-12 rounded-[10px] bg-[#f1f3f8] text-sm font-semibold text-[#5b739f]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={createAssignmentMutation.isPending}
+                  className="h-12 rounded-[10px] bg-[#1f3f93] text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {createAssignmentMutation.isPending ? 'Creating...' : 'Create Assignment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isAssignmentSubmissionsOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[#0a1d4a]/35 p-3">
+          <div className="w-full max-w-[980px] rounded-xl border border-[#d6e3fb] bg-white p-6">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-[42px] font-semibold leading-none text-[#1f3f93]">
+                  {String(
+                    assignmentSubmissionsData?.assignment?.title || 'Assignment Submissions'
+                  )}
+                </h2>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold">
+                  <span
+                    className={`rounded-full px-3 py-1 ${assignmentStatusPillClass(
+                      resolveAssignmentStatus(assignmentSubmissionsData?.assignment)
+                    )}`}
+                  >
+                    {prettyStatus(resolveAssignmentStatus(assignmentSubmissionsData?.assignment))}
+                  </span>
+                  <span className="rounded-full bg-[#e8f1ff] px-3 py-1 text-[#1f3f93]">
+                    {resolveAssignmentSubjectName(assignmentSubmissionsData?.assignment)}
+                  </span>
+                  <span className="rounded-full bg-[#eef2f9] px-3 py-1 text-[#5f79af]">
+                    {resolveAssignmentGradeName(assignmentSubmissionsData?.assignment)}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeAssignmentSubmissionsModal}
+                className="text-[28px] leading-none text-[#6f84b4] hover:text-[#1f3f93]"
+              >
+                x
+              </button>
+            </div>
+
+            {isAssignmentSubmissionsLoading ? (
+              <div className="rounded-[10px] border border-[#d6e3fb] bg-[#f8fbff] p-5 text-sm text-[#5f79af]">
+                Loading submissions...
+              </div>
+            ) : (
+              <>
+                <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-[10px] border border-[#d6efd9] bg-[#eefaf2] p-4">
+                    <p className="text-sm text-[#2b7a49]">Submitted</p>
+                    <p className="mt-2 text-[38px] font-semibold leading-none text-[#008a3d]">
+                      {Array.isArray(assignmentSubmissionsData?.submissions)
+                        ? assignmentSubmissionsData.submissions.length
+                        : 0}
+                    </p>
+                  </div>
+                  <div className="rounded-[10px] border border-[#efe0b0] bg-[#fcf6dd] p-4">
+                    <p className="text-sm text-[#9f7a00]">Pending</p>
+                    <p className="mt-2 text-[38px] font-semibold leading-none text-[#c48a00]">
+                      {Math.max(
+                        0,
+                        Number(assignmentSubmissionsData?.assignment?.totalStudents || 0) -
+                          Number(assignmentSubmissionsData?.submissions?.length || 0)
+                      )}
+                    </p>
+                  </div>
+                  <div className="rounded-[10px] border border-[#dae4f8] bg-[#eef4ff] p-4">
+                    <p className="text-sm text-[#1f3f93]">Total Students</p>
+                    <p className="mt-2 text-[38px] font-semibold leading-none text-[#1a5cff]">
+                      {Number(assignmentSubmissionsData?.assignment?.totalStudents || 0)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="overflow-hidden rounded-[10px] border border-[#d6e3fb]">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-left">
+                      <thead>
+                        <tr className="bg-[#eef4ff] text-sm font-semibold text-[#1f3f93]">
+                          <th className="px-4 py-3">Student Name</th>
+                          <th className="px-4 py-3">Submitted</th>
+                          <th className="px-4 py-3">Grade</th>
+                          <th className="px-4 py-3">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(assignmentSubmissionsData?.submissions || []).map((item, index) => {
+                          const score = Number(item?.grade?.score);
+                          const points = Number(assignmentSubmissionsData?.assignment?.points || 0);
+                          const gradeCell = Number.isFinite(score)
+                            ? `${score}/${points || 0}`
+                            : 'Pending';
+                          const statusMeta = submissionBadgeMeta(item);
+
+                          return (
+                            <tr key={String(item?._id || item?.id || index)} className="border-t border-[#d6e3fb] text-sm">
+                              <td className="px-4 py-3 font-semibold text-[#17367a]">
+                                {String(item?.studentId?.name || 'Unknown')}
+                              </td>
+                              <td className="px-4 py-3 text-[#5f79af]">{formatDateTime(item?.submittedAt)}</td>
+                              <td className="px-4 py-3 font-semibold text-[#1f3f93]">{gradeCell}</td>
+                              <td className="px-4 py-3">
+                                <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusMeta.className}`}>
+                                  {statusMeta.label}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {!assignmentSubmissionsData?.submissions?.length && (
+                          <tr className="border-t border-[#d6e3fb]">
+                            <td colSpan={4} className="px-4 py-8 text-center text-sm text-[#5f79af]">
+                              No submission data found for this assignment.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="mt-5 flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={closeAssignmentSubmissionsModal}
+                    className="h-11 rounded-[10px] bg-[#f1f3f8] px-6 text-sm font-semibold text-[#5b739f]"
+                  >
+                    Close
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isEditAssignmentOpen && editingAssignment && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[#0a1d4a]/30 p-3">
+          <div className="w-full max-w-[620px] rounded-xl border border-[#d6e3fb] bg-white p-6">
+            <form className="space-y-4" onSubmit={handleUpdateAssignment}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-[24px] font-semibold text-[#1f3f93]">Edit Assignment</h2>
+                <button
+                  type="button"
+                  onClick={closeEditAssignmentModal}
+                  className="text-[#6f84b4] hover:text-[#1f3f93]"
+                >
+                  x
+                </button>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                  Assignment Title *
+                </label>
+                <input
+                  type="text"
+                  value={assignmentEditValues.title}
+                  onChange={(event) =>
+                    setAssignmentEditValues((prev) => ({ ...prev, title: event.target.value }))
+                  }
+                  className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                  Description
+                </label>
+                <textarea
+                  rows={3}
+                  value={assignmentEditValues.description}
+                  onChange={(event) =>
+                    setAssignmentEditValues((prev) => ({
+                      ...prev,
+                      description: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-[#d6e3fb] px-3 py-2 text-sm outline-none focus:border-[#1f3f93]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                    Due Date *
+                  </label>
+                  <input
+                    type="date"
+                    value={assignmentEditValues.dueDate}
+                    onChange={(event) =>
+                      setAssignmentEditValues((prev) => ({ ...prev, dueDate: event.target.value }))
+                    }
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                    Due Time
+                  </label>
+                  <input
+                    type="time"
+                    value={assignmentEditValues.dueTime}
+                    onChange={(event) =>
+                      setAssignmentEditValues((prev) => ({ ...prev, dueTime: event.target.value }))
+                    }
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                    Points *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={assignmentEditValues.points}
+                    onChange={(event) =>
+                      setAssignmentEditValues((prev) => ({ ...prev, points: event.target.value }))
+                    }
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                    Status
+                  </label>
+                  <select
+                    value={assignmentEditValues.status}
+                    onChange={(event) =>
+                      setAssignmentEditValues((prev) => ({ ...prev, status: event.target.value }))
+                    }
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  >
+                    <option value="active">Active</option>
+                    <option value="closed">Closed</option>
+                    <option value="draft">Draft</option>
+                  </select>
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-sm text-[#17367a]">
+                <input
+                  type="checkbox"
+                  checked={assignmentEditValues.lateAllowed}
+                  onChange={(event) =>
+                    setAssignmentEditValues((prev) => ({
+                      ...prev,
+                      lateAllowed: event.target.checked,
+                    }))
+                  }
+                />
+                Allow late submissions
+              </label>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                  Existing Attachments
+                </label>
+                <div className="space-y-2">
+                  {existingAssignmentFiles.map((file, index) => (
+                    <div
+                      key={`${String(file?.url || '')}-${index}`}
+                      className="flex items-center justify-between rounded-lg border border-[#d6e3fb] px-3 py-2 text-sm"
+                    >
+                      <span className="truncate text-[#17367a]">
+                        {String(file?.originalName || file?.url || `File ${index + 1}`)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeExistingAssignmentFile(file)}
+                        className="rounded-md bg-[#fff3f3] px-2 py-1 text-xs font-semibold text-[#e10000]"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  {existingAssignmentFiles.length === 0 && (
+                    <p className="text-xs text-[#8aa0cb]">No existing attachments.</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                  Add New Files
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  onChange={(event) =>
+                    setAssignmentEditValues((prev) => ({
+                      ...prev,
+                      files: Array.from(event.target.files || []),
+                    }))
+                  }
+                  className="block w-full rounded-lg border border-dashed border-[#c8daf8] bg-[#f8fbff] px-3 py-3 text-sm text-[#4f6695]"
+                />
+                {!!assignmentEditValues.files.length && (
+                  <p className="mt-1 text-xs text-[#5f79af]">
+                    {assignmentEditValues.files.length} file(s) selected
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 pt-1 md:grid-cols-[1fr_220px]">
+                <button
+                  type="button"
+                  onClick={closeEditAssignmentModal}
+                  className="h-12 rounded-[10px] bg-[#f1f3f8] text-sm font-semibold text-[#5b739f]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updateAssignmentMutation.isPending}
+                  className="h-12 rounded-[10px] bg-[#1f3f93] text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {updateAssignmentMutation.isPending ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
