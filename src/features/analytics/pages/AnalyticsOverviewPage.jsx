@@ -21,28 +21,28 @@ const summaryCards = [
   {
     label: 'Active Users',
     value: '--',
-
+   
     icon: Users,
     iconBg: 'bg-[#ebf1fe] text-[#1f4ca8]',
   },
   {
     label: 'Daily Active Users',
     value: '--',
-
+   
     icon: Activity,
     iconBg: 'bg-[#daf6e6] text-[#039855]',
   },
   {
     label: 'User Retention',
     value: '--',
-
+   
     icon: TrendingUp,
     iconBg: 'bg-[#efe5ff] text-[#7e22ce]',
   },
   {
     label: 'Avg. Session Time',
     value: '--',
-
+   
     icon: Clock3,
     iconBg: 'bg-[#fff2e0] text-[#ea580c]',
   },
@@ -56,6 +56,15 @@ const ATTENDANCE_COLORS = {
 const toNumber = (value, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const pickNumber = (source = {}, keys = [], fallback = 0) => {
+  for (const key of keys) {
+    if (source?.[key] !== undefined && source?.[key] !== null) {
+      return toNumber(source[key], fallback);
+    }
+  }
+  return fallback;
 };
 
 const formatIsoDate = (value) => {
@@ -100,10 +109,59 @@ const getAnalyticsOverview = async ({ from, to } = {}) => {
   if (from) params.from = from;
   if (to) params.to = to;
 
-  const response = await http.get('/admin/analytics/overview', { params });
+  const response = Object.keys(params).length
+    ? await http.get('/admin/analytics/overview', { params })
+    : await http.get('/admin/analytics/overview');
   const payload = response?.data?.data ?? response?.data ?? {};
   const cards = payload?.cards ?? {};
   const trend = Array.isArray(payload?.dailyActivityTrend) ? payload.dailyActivityTrend : [];
+  const rawBandRows = Array.isArray(payload?.studentPerformanceBandsByGradeLevel)
+    ? payload.studentPerformanceBandsByGradeLevel
+    : [];
+  const fallbackPerformanceRows = Array.isArray(payload?.studentPerformanceByGradeLevel)
+    ? payload.studentPerformanceByGradeLevel
+    : [];
+  const normalizePerformanceBandRow = (item) => ({
+    gradeLevel: String(item?.gradeLevel || item?.grade || 'N/A'),
+    excellent: pickNumber(item, ['excellent', 'excellentCount', 'excellent_count'], 0),
+    good: pickNumber(item, ['good', 'goodCount', 'good_count'], 0),
+    average: pickNumber(item, ['average', 'averageCount', 'average_count'], 0),
+    needsImprovement: pickNumber(
+      item,
+      ['needsImprovement', 'needs_improvement', 'needsImprovementCount', 'needs_improvement_count'],
+      0
+    ),
+  });
+
+  const normalizedBands =
+    rawBandRows.length > 0
+      ? rawBandRows.map(normalizePerformanceBandRow)
+      : fallbackPerformanceRows.map((item) => {
+          const hasBandCounts =
+            item?.excellent !== undefined ||
+            item?.good !== undefined ||
+            item?.average !== undefined ||
+            item?.needsImprovement !== undefined ||
+            item?.needs_improvement !== undefined;
+          if (hasBandCounts) return normalizePerformanceBandRow(item);
+
+          const gradeLevel = String(item?.gradeLevel || 'N/A');
+          const gradedCount = Math.max(0, toNumber(item?.gradedCount, 0));
+          const avgScorePct = toNumber(item?.avgScorePct, 0);
+          const bands = {
+            excellent: 0,
+            good: 0,
+            average: 0,
+            needsImprovement: 0,
+          };
+
+          if (avgScorePct >= 80) bands.excellent = gradedCount;
+          else if (avgScorePct >= 60) bands.good = gradedCount;
+          else if (avgScorePct >= 40) bands.average = gradedCount;
+          else bands.needsImprovement = gradedCount;
+
+          return { gradeLevel, ...bands };
+        });
 
   return {
     activeUsers: toNumber(cards?.activeUsers, 0),
@@ -124,17 +182,7 @@ const getAnalyticsOverview = async ({ from, to } = {}) => {
       absentPct: toNumber(payload?.attendanceDistribution?.absentPct, 0),
       latePct: toNumber(payload?.attendanceDistribution?.latePct, 0),
     },
-    studentPerformanceBandsByGradeLevel: (
-      Array.isArray(payload?.studentPerformanceBandsByGradeLevel)
-        ? payload.studentPerformanceBandsByGradeLevel
-        : []
-    ).map((item) => ({
-      gradeLevel: String(item?.gradeLevel || 'N/A'),
-      excellent: toNumber(item?.excellent, 0),
-      good: toNumber(item?.good, 0),
-      average: toNumber(item?.average, 0),
-      needsImprovement: toNumber(item?.needsImprovement, 0),
-    })),
+    studentPerformanceBandsByGradeLevel: normalizedBands,
     assignmentSubmissions: (Array.isArray(payload?.assignmentSubmissions)
       ? payload.assignmentSubmissions
       : []
@@ -150,12 +198,10 @@ const AnalyticsOverviewPage = () => {
   const today = new Date();
   const fromDate = new Date(today);
   fromDate.setDate(today.getDate() - 6);
-  const from = formatIsoDate(fromDate);
-  const to = formatIsoDate(today);
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['analytics-overview', from, to],
-    queryFn: () => getAnalyticsOverview({ from, to }),
+    queryKey: ['analytics-overview'],
+    queryFn: () => getAnalyticsOverview({}),
     staleTime: 30 * 1000,
     retry: 1,
   });
@@ -218,6 +264,10 @@ const AnalyticsOverviewPage = () => {
   const performanceBars = Array.isArray(data?.studentPerformanceBandsByGradeLevel)
     ? data.studentPerformanceBandsByGradeLevel
     : [];
+  const performanceBarsDisplay =
+    performanceBars.length > 0
+      ? performanceBars
+      : [{ gradeLevel: 'N/A', excellent: 0, good: 0, average: 0, needsImprovement: 0 }];
   const hasPerformanceBars = performanceBars.some(
     (item) =>
       Number(item?.excellent || 0) ||
@@ -441,14 +491,10 @@ const AnalyticsOverviewPage = () => {
           <div className="grid h-[320px] place-items-center rounded-[10px] border border-dashed border-[#c7d8f7] bg-[#f9fbff] text-sm text-[#7b91be]">
             Failed to load performance data
           </div>
-        ) : !hasPerformanceBars ? (
-          <div className="grid h-[320px] place-items-center rounded-[10px] border border-dashed border-[#c7d8f7] bg-[#f9fbff] text-sm text-[#7b91be]">
-            No graded submissions in selected range
-          </div>
         ) : (
           <div className="h-[320px] rounded-[10px] border border-dashed border-[#c7d8f7] bg-[#f9fbff] p-3">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={performanceBars} margin={{ top: 10, right: 8, left: 0, bottom: 4 }}>
+              <BarChart data={performanceBarsDisplay} margin={{ top: 10, right: 8, left: 0, bottom: 4 }}>
                 <CartesianGrid stroke="#d9e6ff" strokeDasharray="4 4" />
                 <XAxis
                   dataKey="gradeLevel"
@@ -475,6 +521,11 @@ const AnalyticsOverviewPage = () => {
                 />
               </BarChart>
             </ResponsiveContainer>
+            {!hasPerformanceBars && (
+              <p className="mt-1 text-center text-xs text-[#7b91be]">
+                No graded submissions in selected range
+              </p>
+            )}
           </div>
         )}
       </article>

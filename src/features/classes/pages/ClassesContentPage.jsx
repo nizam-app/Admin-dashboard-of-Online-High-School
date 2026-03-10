@@ -71,6 +71,7 @@ const ClassesContentPage = () => {
   const [createValues, setCreateValues] = useState({
     subject: '',
     grade: '',
+    teacherId: '',
   });
   const [editValues, setEditValues] = useState({
     subject: '',
@@ -415,6 +416,20 @@ const ClassesContentPage = () => {
     retry: 1,
   });
 
+  const { data: teachersResponse, isLoading: isTeachersLoading } = useQuery({
+    queryKey: ['class-teachers-options'],
+    queryFn: () =>
+      getUsers({
+        role: 'teacher',
+        status: 'active',
+        search: '',
+        page: 1,
+        limit: 1000,
+      }),
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
   const gradeOptions = useMemo(
     () =>
       (gradesFromApi || [])
@@ -437,6 +452,21 @@ const ClassesContentPage = () => {
       .filter(Boolean);
     return Array.from(new Set([...fromApi, ...fromClasses]));
   }, [subjectsFromApi, classesFromApi]);
+
+  const teacherOptions = useMemo(() => {
+    const users = Array.isArray(teachersResponse?.users)
+      ? teachersResponse.users
+      : Array.isArray(teachersResponse?.items)
+        ? teachersResponse.items
+        : [];
+
+    return users
+      .map((teacher) => ({
+        id: String(teacher?.id || teacher?._id || '').trim(),
+        name: String(teacher?.name || teacher?.fullName || '').trim(),
+      }))
+      .filter((teacher) => teacher.id && teacher.name);
+  }, [teachersResponse]);
 
   const subjectCatalog = useMemo(
     () =>
@@ -544,6 +574,12 @@ const ClassesContentPage = () => {
   }, [createValues.grade, gradeOptions]);
 
   useEffect(() => {
+    if (!createValues.teacherId && teacherOptions.length > 0) {
+      setCreateValues((prev) => ({ ...prev, teacherId: teacherOptions[0].id }));
+    }
+  }, [createValues.teacherId, teacherOptions]);
+
+  useEffect(() => {
     const totalPages = Number(recentLessonsPagination?.totalPages || 1);
     if (recentLessonsPage > totalPages) {
       setRecentLessonsPage(totalPages);
@@ -569,13 +605,15 @@ const ClassesContentPage = () => {
     event.preventDefault();
     const subject = String(createValues.subject || '').trim();
     const gradeId = String(createValues.grade || '').trim();
+    const teacherId = String(createValues.teacherId || '').trim();
     const selectedGrade = gradeOptions.find((item) => item.id === gradeId);
-    if (!subject || !selectedGrade) return;
+    if (!subject || !selectedGrade || !teacherId) return;
 
     const payload = {
       subject,
       gradeId,
       gradeLevel: selectedGrade.label,
+      teacherId,
     };
 
     createClassMutation.mutate(payload, {
@@ -1499,25 +1537,25 @@ const ClassesContentPage = () => {
 
   return (
     <section className="flex flex-col gap-4">
-      <div className="w-full max-w-[430px] rounded-[10px] border border-[#d6e3fb] bg-white p-1">
-        <div className="grid grid-cols-3 gap-1">
-          {TAB_OPTIONS.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`h-10 rounded-md text-sm font-semibold ${
-                activeTab === tab ? 'bg-[#1f3f93] text-white' : 'text-[#17367a]'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
+      <div className="flex w-full items-center justify-between gap-3">
+        <div className="w-full max-w-[430px] rounded-[10px] border border-[#d6e3fb] bg-white p-1">
+          <div className="grid grid-cols-3 gap-1">
+            {TAB_OPTIONS.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveTab(tab)}
+                className={`h-10 rounded-md text-sm font-semibold ${
+                  activeTab === tab ? 'bg-[#1f3f93] text-white' : 'text-[#17367a]'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      {activeTab === 'Classes' && (
-        <div>
+        {activeTab === 'Classes' && (
           <button
             type="button"
             onClick={() => setIsCreateOpen(true)}
@@ -1526,8 +1564,8 @@ const ClassesContentPage = () => {
             <FiPlus size={16} />
             Create Class
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {classActionError && (
         <div className="rounded-[10px] border border-[#f5d0d0] bg-[#fff5f5] p-3 text-sm text-red-600">
@@ -2723,7 +2761,7 @@ const ClassesContentPage = () => {
             <form className="space-y-4" onSubmit={handleCreateClass}>
               <h2 className="text-[24px] font-semibold text-[#1f3f93]">Create New Class</h2>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
                   <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Subject</label>
                   <select
@@ -2761,6 +2799,25 @@ const ClassesContentPage = () => {
                     ))}
                   </select>
                 </div>
+
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Teacher</label>
+                  <select
+                    value={createValues.teacherId}
+                    onChange={(event) =>
+                      setCreateValues((prev) => ({ ...prev, teacherId: event.target.value }))
+                    }
+                    className="h-12 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                    disabled={isTeachersLoading || teacherOptions.length === 0}
+                  >
+                    {teacherOptions.length === 0 && <option value="">No teachers available</option>}
+                    {teacherOptions.map((teacher) => (
+                      <option key={teacher.id} value={teacher.id}>
+                        {teacher.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 gap-3 pt-1 md:grid-cols-[1fr_180px]">
@@ -2776,6 +2833,8 @@ const ClassesContentPage = () => {
                   disabled={
                     subjectOptions.length === 0 ||
                     gradeOptions.length === 0 ||
+                    teacherOptions.length === 0 ||
+                    !createValues.teacherId ||
                     createClassMutation.isPending
                   }
                   className="h-12 rounded-[10px] bg-[#1f3f93] text-sm font-semibold text-white disabled:opacity-60"
@@ -2794,7 +2853,7 @@ const ClassesContentPage = () => {
             <form className="space-y-4" onSubmit={handleUpdateClass}>
               <h2 className="text-[24px] font-semibold text-[#1f3f93]">Edit Class</h2>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
                   <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Subject</label>
                   <select
@@ -2940,7 +2999,7 @@ const ClassesContentPage = () => {
             <form className="space-y-4" onSubmit={handleUpdateLesson}>
               <h2 className="text-[24px] font-semibold text-[#1f3f93]">Edit Lesson</h2>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
                   <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Title</label>
                   <input
@@ -3062,3 +3121,4 @@ const ClassesContentPage = () => {
 };
 
 export default ClassesContentPage;
+
