@@ -638,20 +638,6 @@ const ClassesContentPage = () => {
     });
   };
 
-  const openEditModal = (item) => {
-    const matchedGrade =
-      gradeOptions.find((grade) => normalizeText(grade.label) === normalizeText(item.grade)) || null;
-    const matchedSubject =
-      subjectOptions.find((subject) => normalizeText(subject) === normalizeText(item.subject)) || '';
-
-    setEditingClass(item);
-    setEditValues({
-      subject: matchedSubject || item.subject || '',
-      grade: matchedGrade?.id || '',
-    });
-    setIsEditOpen(true);
-  };
-
   const handleUpdateClass = (event) => {
     event.preventDefault();
     if (!editingClass) return;
@@ -1638,14 +1624,7 @@ const ClassesContentPage = () => {
               </span>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-2 border-t border-[#e2ecff] pt-3">
-              <button
-                type="button"
-                onClick={() => openEditModal(item)}
-                className="inline-flex h-9 items-center justify-center rounded-md bg-[#eef4ff] text-[#4d91ff]"
-              >
-                <FiEdit2 size={16} />
-              </button>
+            <div className="mt-4 grid grid-cols-1 gap-2 border-t border-[#e2ecff] pt-3">
               <button
                 type="button"
                 onClick={() => handleDeleteClass(item)}

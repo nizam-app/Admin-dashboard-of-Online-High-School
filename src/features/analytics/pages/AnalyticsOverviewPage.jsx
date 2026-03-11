@@ -133,35 +133,18 @@ const getAnalyticsOverview = async ({ from, to } = {}) => {
     ),
   });
 
-  const normalizedBands =
-    rawBandRows.length > 0
-      ? rawBandRows.map(normalizePerformanceBandRow)
-      : fallbackPerformanceRows.map((item) => {
-          const hasBandCounts =
-            item?.excellent !== undefined ||
-            item?.good !== undefined ||
-            item?.average !== undefined ||
-            item?.needsImprovement !== undefined ||
-            item?.needs_improvement !== undefined;
-          if (hasBandCounts) return normalizePerformanceBandRow(item);
+  const hasBandCounts = (item) =>
+    item?.excellent !== undefined ||
+    item?.good !== undefined ||
+    item?.average !== undefined ||
+    item?.needsImprovement !== undefined ||
+    item?.needs_improvement !== undefined;
 
-          const gradeLevel = String(item?.gradeLevel || 'N/A');
-          const gradedCount = Math.max(0, toNumber(item?.gradedCount, 0));
-          const avgScorePct = toNumber(item?.avgScorePct, 0);
-          const bands = {
-            excellent: 0,
-            good: 0,
-            average: 0,
-            needsImprovement: 0,
-          };
+  const bandRows = rawBandRows.length > 0
+    ? rawBandRows
+    : fallbackPerformanceRows.filter(hasBandCounts);
 
-          if (avgScorePct >= 80) bands.excellent = gradedCount;
-          else if (avgScorePct >= 60) bands.good = gradedCount;
-          else if (avgScorePct >= 40) bands.average = gradedCount;
-          else bands.needsImprovement = gradedCount;
-
-          return { gradeLevel, ...bands };
-        });
+  const normalizedBands = bandRows.map(normalizePerformanceBandRow);
 
   return {
     activeUsers: toNumber(cards?.activeUsers, 0),

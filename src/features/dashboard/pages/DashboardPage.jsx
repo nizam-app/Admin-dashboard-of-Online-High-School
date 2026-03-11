@@ -33,9 +33,8 @@ const WeeklyActivityChart = ({ weekly }) => {
     day: label,
     students: Number(weekly?.students?.[index] ?? 0),
     teachers: Number(weekly?.teachers?.[index] ?? 0),
-    sessions: Number(weekly?.sessions?.[index] ?? 0),
   }));
-  const hasData = chartData.some((item) => item.students || item.teachers || item.sessions);
+  const hasData = chartData.some((item) => item.students || item.teachers);
 
   if (!hasData) {
     return (
@@ -50,13 +49,31 @@ const WeeklyActivityChart = ({ weekly }) => {
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
           <CartesianGrid stroke="#d9e6ff" strokeDasharray="4 4" />
-          <XAxis dataKey="day" tick={{ fill: '#4f66a0', fontSize: 12 }} axisLine={{ stroke: '#d9e6ff' }} />
+          <XAxis
+            dataKey="day"
+            tick={{ fill: '#4f66a0', fontSize: 12 }}
+            axisLine={{ stroke: '#d9e6ff' }}
+            padding={{ left: 0, right: 0 }}
+          />
           <YAxis tick={{ fill: '#6f84b4', fontSize: 12 }} axisLine={{ stroke: '#d9e6ff' }} />
           <Tooltip />
           <Legend />
-          <Line type="monotone" dataKey="students" stroke="#224599" strokeWidth={2.2} dot={{ r: 3 }} />
-          <Line type="monotone" dataKey="teachers" stroke="#4f8ff7" strokeWidth={1.8} dot={{ r: 2.8 }} />
-          <Line type="monotone" dataKey="sessions" stroke="#8bb7fb" strokeWidth={1.8} dot={{ r: 2.8 }} />
+          <Line
+            type="linear"
+            dataKey="students"
+            stroke="#224599"
+            strokeWidth={2.2}
+            dot={{ r: 3 }}
+            connectNulls
+          />
+          <Line
+            type="linear"
+            dataKey="teachers"
+            stroke="#4f8ff7"
+            strokeWidth={1.8}
+            dot={{ r: 2.8 }}
+            connectNulls
+          />
         </LineChart>
       </ResponsiveContainer>
     </div>
