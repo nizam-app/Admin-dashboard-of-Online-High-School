@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
-import { Link, useLocation, useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { loginAdmin } from '../api/authApi';
 import { useAuth } from '../context/AuthContext';
 
@@ -90,10 +90,7 @@ const LoginPage = () => {
         </form>
 
         <p className="mt-4 text-sm text-[#6f84b4]">
-          New admin?{' '}
-          <Link className="font-medium text-[#1f4ca8]" to="/auth/register">
-            Register
-          </Link>
+          Welcome back! Please log in to access the admin dashboard.
         </p>
       </section>
     </main>

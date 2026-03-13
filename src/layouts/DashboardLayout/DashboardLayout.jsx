@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router';
-import { BarChart3, BookOpen, Gauge, Users } from 'lucide-react';
+import { BarChart3, BookOpen, CalendarDays, Gauge, Users } from 'lucide-react';
 import logo from '../../assets/logo.png';
 import { useAuth } from '../../features/auth/context/AuthContext';
 
@@ -8,6 +8,7 @@ const navItems = [
   { label: 'User Management', icon: Users, to: '/users' },
   { label: 'Classes & Content', icon: BookOpen, to: '/classes-content' },
   { label: 'Analytics', icon: BarChart3, to: '/analytics' },
+  { label: 'Timetable', icon: CalendarDays, to: '/timetable' },
 ];
 
 const DashboardLayout = () => {
@@ -21,16 +22,19 @@ const DashboardLayout = () => {
     '/users': 'User Management',
     '/classes-content': 'Classes & Content',
     '/analytics': 'Analytics',
+    '/timetable': 'Timetable',
   };
   const pageTitle = location.pathname.startsWith('/analytics')
     ? 'Analytics'
+    : location.pathname.startsWith('/timetable')
+    ? 'Timetable'
     : pageTitleMap[location.pathname] || 'Dashboard Overview';
 
   return (
     <div className="min-h-screen bg-[#f3f7fe] text-[#17367a]">
       <div className="grid min-h-screen grid-cols-1 md:grid-cols-[270px_1fr] xl:grid-cols-[270px_1fr]">
         <aside className="border-r border-[#d6e3fb] bg-[#f8fbff] p-3 md:flex md:flex-col md:gap-3">
-          <div className="flex min-h-[140px] items-center justify-center rounded-sm bg-[#1f3f93] p-4 md:min-h-[140px]">
+          <div className="flex min-h-[140px] items-center justify-center rounded-sm bg-white p-4 md:min-h-[140px]">
             <img src={logo} alt="Guerini" className="h-24 w-24 object-contain" />
           </div>
 

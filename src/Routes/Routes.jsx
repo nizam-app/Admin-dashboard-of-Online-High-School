@@ -7,8 +7,10 @@ import AnalyticsPage from '../features/analytics/pages/AnalyticsPage';
 import AnalyticsOverviewPage from '../features/analytics/pages/AnalyticsOverviewPage';
 import AnalyticsStudentProgressPage from '../features/analytics/pages/AnalyticsStudentProgressPage';
 import AnalyticsTeacherActivityPage from '../features/analytics/pages/AnalyticsTeacherActivityPage';
+import TimetablePage from '../features/timetable/pages/TimetablePage';
+import GeneralTimetablePage from '../features/timetable/pages/GeneralTimetablePage';
+import ClassSpecificTimetablePage from '../features/timetable/pages/ClassSpecificTimetablePage';
 import LoginPage from '../features/auth/pages/LoginPage';
-import RegisterPage from '../features/auth/pages/RegisterPage';
 import RequireAuth from '../features/auth/components/RequireAuth';
 import GuestOnly from '../features/auth/components/GuestOnly';
 
@@ -19,10 +21,6 @@ export const router = createBrowserRouter([
       {
         path: '/auth/login',
         Component: LoginPage,
-      },
-      {
-        path: '/auth/register',
-        Component: RegisterPage,
       },
     ],
   },
@@ -60,6 +58,24 @@ export const router = createBrowserRouter([
               {
                 path: 'teacher-activity',
                 Component: AnalyticsTeacherActivityPage,
+              },
+            ],
+          },
+          {
+            path: 'timetable',
+            Component: TimetablePage,
+            children: [
+              {
+                index: true,
+                Component: GeneralTimetablePage,
+              },
+              {
+                path: 'general',
+                Component: GeneralTimetablePage,
+              },
+              {
+                path: 'class-specific',
+                Component: ClassSpecificTimetablePage,
               },
             ],
           },

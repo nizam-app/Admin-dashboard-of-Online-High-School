@@ -115,36 +115,25 @@ const getAnalyticsOverview = async ({ from, to } = {}) => {
   const payload = response?.data?.data ?? response?.data ?? {};
   const cards = payload?.cards ?? {};
   const trend = Array.isArray(payload?.dailyActivityTrend) ? payload.dailyActivityTrend : [];
-  const rawBandRows = Array.isArray(payload?.studentPerformanceBandsByGradeLevel)
+  const normalizedBands = (Array.isArray(payload?.studentPerformanceBandsByGradeLevel)
     ? payload.studentPerformanceBandsByGradeLevel
-    : [];
-  const fallbackPerformanceRows = Array.isArray(payload?.studentPerformanceByGradeLevel)
+    : []
+  ).map((item) => ({
+    gradeLevel: String(item?.gradeLevel || 'N/A'),
+    excellent: toNumber(item?.excellent, 0),
+    good: toNumber(item?.good, 0),
+    average: toNumber(item?.average, 0),
+    needsImprovement: toNumber(item?.needsImprovement, 0),
+  }));
+
+  const performanceByGrade = (Array.isArray(payload?.studentPerformanceByGradeLevel)
     ? payload.studentPerformanceByGradeLevel
-    : [];
-  const normalizePerformanceBandRow = (item) => ({
-    gradeLevel: String(item?.gradeLevel || item?.grade || 'N/A'),
-    excellent: pickNumber(item, ['excellent', 'excellentCount', 'excellent_count'], 0),
-    good: pickNumber(item, ['good', 'goodCount', 'good_count'], 0),
-    average: pickNumber(item, ['average', 'averageCount', 'average_count'], 0),
-    needsImprovement: pickNumber(
-      item,
-      ['needsImprovement', 'needs_improvement', 'needsImprovementCount', 'needs_improvement_count'],
-      0
-    ),
-  });
-
-  const hasBandCounts = (item) =>
-    item?.excellent !== undefined ||
-    item?.good !== undefined ||
-    item?.average !== undefined ||
-    item?.needsImprovement !== undefined ||
-    item?.needs_improvement !== undefined;
-
-  const bandRows = rawBandRows.length > 0
-    ? rawBandRows
-    : fallbackPerformanceRows.filter(hasBandCounts);
-
-  const normalizedBands = bandRows.map(normalizePerformanceBandRow);
+    : []
+  ).map((item) => ({
+    gradeLevel: String(item?.gradeLevel || 'N/A'),
+    avgScorePct: toNumber(item?.avgScorePct, 0),
+    gradedCount: toNumber(item?.gradedCount, 0),
+  }));
 
   return {
     activeUsers: toNumber(cards?.activeUsers, 0),
@@ -166,6 +155,7 @@ const getAnalyticsOverview = async ({ from, to } = {}) => {
       latePct: toNumber(payload?.attendanceDistribution?.latePct, 0),
     },
     studentPerformanceBandsByGradeLevel: normalizedBands,
+    studentPerformanceByGradeLevel: performanceByGrade,
     assignmentSubmissions: (Array.isArray(payload?.assignmentSubmissions)
       ? payload.assignmentSubmissions
       : []

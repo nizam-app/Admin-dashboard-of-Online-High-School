@@ -58,7 +58,7 @@ const normalizeClassItem = (item, index) => {
   const gradeId = toObjectId(pick(item, ['gradeId', 'grade_id'], null));
   const subjectId = toObjectId(pick(item, ['subjectId', 'subject_id'], null));
 
-  const studentsRaw = pick(item, ['students', 'studentIds'], []);
+  const studentsRaw = pick(item, ['students', 'studentIds'], null);
   const teacherRaw = pick(item, ['teacher', 'assignedTeacher'], null);
 
   const teacherName =
@@ -69,14 +69,29 @@ const normalizeClassItem = (item, index) => {
 
   const studentsCount = Array.isArray(studentsRaw)
     ? studentsRaw.length
-    : toNumber(
-        pick(item, ['studentsCount', 'studentCount', 'totalStudents'], studentsRaw),
-        0
-      );
+    : toNumber(pick(item, ['studentsCount', 'studentCount', 'totalStudents'], null), 0);
+  const className = String(
+    pick(item, ['className', 'name'], '') ||
+      `${String(pick(item, ['subject', 'subjectName', 'title'], 'N/A'))} ${String(
+        pick(item, ['gradeLevel', 'grade', 'classGrade'], 'N/A')
+      )}`
+  ).trim();
+  const scheduleRaw = Array.isArray(pick(item, ['schedule'], [])) ? pick(item, ['schedule'], []) : [];
+  const schedule = scheduleRaw
+    .map((slot, slotIndex) => ({
+      id: toObjectId(slot?._id || slot?.id) || `slot-${index}-${slotIndex}`,
+      day: String(pick(slot, ['day'], '')).trim().toLowerCase(),
+      startMin: toNumber(pick(slot, ['startMin'], null), null),
+      endMin: toNumber(pick(slot, ['endMin'], null), null),
+      room: String(pick(slot, ['room'], '')).trim(),
+      source: String(pick(slot, ['source'], 'class')).trim().toLowerCase(),
+    }))
+    .filter((slot) => slot.day);
 
   return {
     id: normalizedId || `class-${index}`,
     deleteId: normalizedId,
+    className,
     gradeId,
     subjectId,
     subject: String(pick(item, ['subject', 'subjectName', 'title'], 'N/A')),
@@ -87,7 +102,10 @@ const normalizeClassItem = (item, index) => {
       pick(item, ['assignmentsCount', 'assignmentCount', 'totalAssignments'], 0),
       0
     ),
+    schedule,
+    status: String(pick(item, ['status'], 'active')).toLowerCase(),
     teacher: teacherName || 'Not assigned',
+    teacherName: teacherName || 'Not assigned',
     teacherAssigned: Boolean(teacherName),
   };
 };
@@ -106,22 +124,17 @@ const extractClassList = (root) => {
   return [];
 };
 
-export const getClasses = async () => {
-  let response;
-  try {
-    response = await http.get('/admin/classes');
-  } catch (error) {
-    if (error?.response?.status === 404) {
-      response = await http.get('/classes');
-    } else {
-      throw error;
-    }
-  }
-
+export const getClasses = async ({ page = 1, limit = 20, status = 'active' } = {}) => {
+  const response = await http.get('/admin/classes', {
+    params: { page, limit, status },
+  });
   const payload = response?.data || {};
   const root = payload?.data ?? payload;
   const list = extractClassList(root);
-  return list.map(normalizeClassItem);
+  return {
+    items: list.map(normalizeClassItem),
+    meta: payload?.meta || root?.meta || null,
+  };
 };
 
 export const createClass = async (payload) => {
@@ -157,7 +170,7 @@ export const updateClass = async (classId, payload) => {
   return data;
 };
 
-export const deleteClass = async (classId) => {
+export const deleteClass = async (classId, { hardDelete = true } = {}) => {
   const id = String(classId || '').trim();
   const encodedId = encodeURIComponent(id);
 
@@ -174,23 +187,11 @@ export const deleteClass = async (classId) => {
     return data;
   };
 
-  const attempts = [
-    () => http.delete(`/admin/classes/${encodedId}?hardDelete=true`, { data: {} }),
-    () => http.delete(`/classes/${encodedId}`, { data: {} }),
-    () => http.post(`/admin/classes/${encodedId}/delete`, {}),
-  ];
-
-  let lastError;
-  for (const attempt of attempts) {
-    try {
-      const response = await attempt();
-      return ensureSuccess(response);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError;
+  const url = hardDelete
+    ? `/admin/classes/${encodedId}?hardDelete=true`
+    : `/admin/classes/${encodedId}`;
+  const response = await http.delete(url, { data: {} });
+  return ensureSuccess(response);
 };
 
 export const createSubject = async (payload) => {
@@ -250,11 +251,47 @@ const extractSubjectList = (root) => {
 };
 
 export const getSubjectsList = async () => {
-  const response = await http.get('/subjects');
+  const response = await http.get('/admin/subjects/summary');
   const payload = response?.data || {};
   const root = payload?.data ?? payload;
-  const list = extractSubjectList(root);
-  return list.map(normalizeSubjectItem).filter(Boolean);
+  const rows = extractSubjectList(root);
+  return rows
+    .map((row, index) => {
+      const normalized = normalizeSubjectItem(row, index);
+      if (!normalized) return null;
+      return {
+        ...normalized,
+        classCount: toNumber(pick(row, ['classCount'], 0), 0),
+      };
+    })
+    .filter(Boolean);
+};
+
+export const getGradesSections = async () => {
+  const response = await http.get('/admin/grades/sections');
+  const payload = response?.data || {};
+  const root = payload?.data ?? payload;
+  if (!Array.isArray(root)) return [];
+  return root
+    .map((item) => ({
+      id: toObjectId(pick(item, ['id', '_id'], null)),
+      label: String(pick(item, ['label', 'gradeLevel', 'name'], '')).trim(),
+      sections: Array.isArray(item?.sections) ? item.sections : [],
+      classCount: toNumber(pick(item, ['classCount'], 0), 0),
+    }))
+    .filter((item) => item.id && item.label);
+};
+
+export const getContentStats = async () => {
+  const response = await http.get('/admin/content/stats');
+  const payload = response?.data || {};
+  const data = payload?.data ?? payload;
+  return {
+    lessons: toNumber(pick(data, ['lessons'], 0), 0),
+    videos: toNumber(pick(data, ['videos'], 0), 0),
+    documents: toNumber(pick(data, ['documents'], 0), 0),
+    assignments: toNumber(pick(data, ['assignments'], 0), 0),
+  };
 };
 
 export const deleteSubject = async (subjectId) => {

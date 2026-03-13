@@ -682,7 +682,6 @@ const UserManagementPage = () => {
       role: 'teacher',
       subject,
       assignedGradeIds: gradeIds,
-      assignedGrades,
     };
     updateAssignmentMutation.mutate({ userId: selectedUser.id, payload });
   };
@@ -1059,12 +1058,12 @@ const UserManagementPage = () => {
               <div className="flex items-start justify-between">
                 <div>
                   <h2 className="text-[34px] font-semibold leading-none text-[#1f3f93]">
-                    Manage Class Assignments
+                    Manage Grade Assignments
                   </h2>
                   <p className="mt-2 text-sm text-[#6f84b4]">
                     {normalizeValue(selectedUser.role).toLowerCase() === 'teacher'
-                      ? 'Assign classes for teaching'
-                      : 'Assign student to classes'}
+                      ? 'Assign grades for teaching'
+                      : 'Assign student to a grade'}
                   </p>
                 </div>
                 <button
@@ -1155,7 +1154,7 @@ const UserManagementPage = () => {
               </div>
 
               <div>
-                <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Classes</h3>
+                <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Grades</h3>
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                   {availableGradeOptions.map((grade) => {
                     const isTeacher = selectedUserRole === 'teacher';
@@ -1178,7 +1177,7 @@ const UserManagementPage = () => {
                     );
                   })}
                   {availableGradeOptions.length === 0 && (
-                    <p className="col-span-full text-sm text-[#7b91be]">No remaining classes.</p>
+                    <p className="col-span-full text-sm text-[#7b91be]">No remaining grades.</p>
                   )}
                 </div>
               </div>

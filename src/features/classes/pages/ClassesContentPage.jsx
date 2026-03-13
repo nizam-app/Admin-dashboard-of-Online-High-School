@@ -8,10 +8,11 @@ import {
   FiUpload,
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
-import { getGrades, getUsers } from '../../users/api/usersApi';
+import { getUsers } from '../../users/api/usersApi';
 import {
   createAssignment,
   createClass,
+  getContentStats,
   createGrade,
   createSubject,
   deleteAssignment,
@@ -23,6 +24,7 @@ import {
   getAssignmentsStats,
   getAssignmentSubmissions,
   getClasses,
+  getGradesSections,
   getLessons,
   getSubjectsList,
   resolveLessonDownloadUrl,
@@ -34,11 +36,19 @@ import {
 
 const TAB_OPTIONS = ['Classes', 'Content Library', 'Assignments'];
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
-const classKey = (grade, subject) => `${normalizeText(grade)}__${normalizeText(subject)}`;
 const isMongoId = (value) => /^[a-f\d]{24}$/i.test(String(value || '').trim());
 const looksLikeId = (value) => /^[a-f\d]{24}$/i.test(String(value || '').trim());
 const LESSON_FILE_INPUT_ID = 'lesson-file-input';
 const LESSONS_PAGE_SIZE = 5;
+const DAY_LABELS = {
+  sat: 'Sat',
+  sun: 'Sun',
+  mon: 'Mon',
+  tue: 'Tue',
+  wed: 'Wed',
+  thu: 'Thu',
+  fri: 'Fri',
+};
 const ASSIGNMENTS_PAGE_SIZE = 4;
 const formatDateTime = (value) => {
   if (!value) return '-';
@@ -135,19 +145,19 @@ const ClassesContentPage = () => {
   });
 
   const {
-    data: classesFromApi = [],
+    data: classesResponse = { items: [], meta: null },
     isLoading: isClassesLoading,
     isError: isClassesError,
   } = useQuery({
     queryKey: ['classes-content-classes'],
-    queryFn: getClasses,
+    queryFn: () => getClasses({ page: 1, limit: 20 }),
     staleTime: 30 * 1000,
     retry: 1,
   });
 
   const { data: gradesFromApi = [], isLoading: isGradesLoading } = useQuery({
     queryKey: ['class-grades-options'],
-    queryFn: getGrades,
+    queryFn: getGradesSections,
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
@@ -156,6 +166,13 @@ const ClassesContentPage = () => {
     queryKey: ['class-subjects-options'],
     queryFn: getSubjectsList,
     staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
+  const { data: contentStats = { lessons: 0, videos: 0, documents: 0, assignments: 0 } } = useQuery({
+    queryKey: ['classes-content-stats'],
+    queryFn: getContentStats,
+    staleTime: 30 * 1000,
     retry: 1,
   });
 
@@ -402,20 +419,6 @@ const ClassesContentPage = () => {
     },
   });
 
-  const { data: usersForCount } = useQuery({
-    queryKey: ['classes-content-student-counts'],
-    queryFn: () =>
-      getUsers({
-        role: 'student',
-        status: '',
-        search: '',
-        page: 1,
-        limit: 1000,
-      }),
-    staleTime: 30 * 1000,
-    retry: 1,
-  });
-
   const { data: teachersResponse, isLoading: isTeachersLoading } = useQuery({
     queryKey: ['class-teachers-options'],
     queryFn: () =>
@@ -435,7 +438,9 @@ const ClassesContentPage = () => {
       (gradesFromApi || [])
         .map((grade) => ({
           id: String(grade?.id || ''),
-          label: String(grade?.level || grade?.name || '').trim(),
+          label: String(grade?.label || grade?.level || grade?.name || '').trim(),
+          classCount: Number(grade?.classCount || 0),
+          sections: Array.isArray(grade?.sections) ? grade.sections : [],
         }))
         .filter((grade) => grade.id && grade.label),
     [gradesFromApi]
@@ -447,11 +452,11 @@ const ClassesContentPage = () => {
         typeof subject === 'string' ? String(subject).trim() : String(subject?.name || '').trim()
       )
       .filter(Boolean);
-    const fromClasses = (classesFromApi || [])
+    const fromClasses = (classesResponse?.items || [])
       .map((item) => String(item?.subject || '').trim())
       .filter(Boolean);
     return Array.from(new Set([...fromApi, ...fromClasses]));
-  }, [subjectsFromApi, classesFromApi]);
+  }, [subjectsFromApi, classesResponse?.items]);
 
   const teacherOptions = useMemo(() => {
     const users = Array.isArray(teachersResponse?.users)
@@ -496,8 +501,8 @@ const ClassesContentPage = () => {
   }, [gradeOptions]);
 
   const classes = useMemo(
-    () => (Array.isArray(classesFromApi) ? classesFromApi : []),
-    [classesFromApi]
+    () => (Array.isArray(classesResponse?.items) ? classesResponse.items : []),
+    [classesResponse?.items]
   );
   const assignmentClassOptions = useMemo(
     () =>
@@ -541,25 +546,6 @@ const ClassesContentPage = () => {
       },
     [assignmentsResponse]
   );
-
-  const studentCountByClass = useMemo(() => {
-    const map = new Map();
-    const students = usersForCount?.users || [];
-
-    students.forEach((student) => {
-      const assigned = Array.isArray(student?.assignedClasses) ? student.assignedClasses : [];
-      assigned.forEach((entry) => {
-        const text = String(entry || '').trim();
-        if (!text || text.startsWith('+')) return;
-        const [grade, subject] = text.split('-').map((part) => String(part || '').trim());
-        if (!grade || !subject) return;
-        const key = classKey(grade, subject);
-        map.set(key, (map.get(key) || 0) + 1);
-      });
-    });
-
-    return map;
-  }, [usersForCount?.users]);
 
   useEffect(() => {
     if (!createValues.subject && subjectOptions.length > 0) {
@@ -607,10 +593,14 @@ const ClassesContentPage = () => {
     const gradeId = String(createValues.grade || '').trim();
     const teacherId = String(createValues.teacherId || '').trim();
     const selectedGrade = gradeOptions.find((item) => item.id === gradeId);
+    const selectedSubject = subjectCatalog.find(
+      (item) => normalizeText(item.name) === normalizeText(subject)
+    );
     if (!subject || !selectedGrade || !teacherId) return;
 
     const payload = {
       subject,
+      subjectId: selectedSubject?.id || undefined,
       gradeId,
       gradeLevel: selectedGrade.label,
       teacherId,
@@ -645,10 +635,14 @@ const ClassesContentPage = () => {
     const subject = String(editValues.subject || '').trim();
     const gradeId = String(editValues.grade || '').trim();
     const selectedGrade = gradeOptions.find((item) => item.id === gradeId);
+    const selectedSubject = subjectCatalog.find(
+      (item) => normalizeText(item.name) === normalizeText(subject)
+    );
     if (!subject || !selectedGrade) return;
 
     const payload = {
       subject,
+      subjectId: selectedSubject?.id || undefined,
       gradeId,
       gradeLevel: selectedGrade.label,
     };
@@ -994,6 +988,25 @@ const ClassesContentPage = () => {
     if (gradeText && !looksLikeId(gradeText)) return gradeText;
     if (gradeText && gradeNameById.has(gradeText)) return gradeNameById.get(gradeText);
     return 'N/A';
+  };
+
+  const formatMinutesLabel = (value) => {
+    const total = Number(value);
+    if (!Number.isFinite(total) || total < 0) return '';
+    const hours24 = Math.floor(total / 60);
+    const minutes = total % 60;
+    const suffix = hours24 >= 12 ? 'PM' : 'AM';
+    const hours12 = hours24 % 12 || 12;
+    return `${hours12}:${String(minutes).padStart(2, '0')} ${suffix}`;
+  };
+
+  const formatScheduleLabel = (slot) => {
+    const day = DAY_LABELS[String(slot?.day || '').trim().toLowerCase()] || String(slot?.day || '').trim();
+    const start = formatMinutesLabel(slot?.startMin);
+    const end = formatMinutesLabel(slot?.endMin);
+    const room = String(slot?.room || '').trim();
+    const timeLabel = start && end ? `${start} - ${end}` : '';
+    return [day, timeLabel, room ? `Room ${room}` : ''].filter(Boolean).join(' | ');
   };
 
   const findGradeIdByName = (name) => {
@@ -1578,9 +1591,7 @@ const ClassesContentPage = () => {
         )}
 
         {classes.map((item) => {
-          const backendCount = Number(item.students || 0);
-          const fallbackCount = Number(studentCountByClass.get(classKey(item.grade, item.subject)) || 0);
-          const displayStudents = backendCount > 0 ? backendCount : fallbackCount;
+          const displayStudents = Number(item.students || 0);
           return (
           <article
             key={item.id}
@@ -1589,7 +1600,7 @@ const ClassesContentPage = () => {
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
                 <h3 className="m-0 text-[20px] font-semibold leading-none text-[#1f3f93]">
-                  {item.subject} {item.grade}
+                  {item.className || `${item.subject} ${item.grade}`}
                 </h3>
                 <p className="mt-2 text-sm text-[#5f79af]">{item.grade}</p>
               </div>
@@ -1605,7 +1616,7 @@ const ClassesContentPage = () => {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[#5f79af]">Teacher</span>
-                <strong>{item.teacherAssigned ? '\u2713' : 'Not assigned'}</strong>
+                <strong>{item.teacherName || item.teacher || 'Not assigned'}</strong>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[#5f79af]">Lessons</span>
@@ -1620,8 +1631,26 @@ const ClassesContentPage = () => {
             <div className="mt-4 border-t border-[#e2ecff] pt-3">
               <p className="mb-2 text-sm text-[#5f79af]">Assigned Teacher:</p>
               <span className="rounded-md border border-[#c8daf8] bg-[#eef4ff] px-2 py-1 text-xs text-[#1f4ca8]">
-                {item.teacher}
+                {item.teacherName || item.teacher || 'Not assigned'}
               </span>
+            </div>
+
+            <div className="mt-4 border-t border-[#e2ecff] pt-3">
+              <p className="mb-2 text-sm text-[#5f79af]">Schedule:</p>
+              {Array.isArray(item.schedule) && item.schedule.length > 0 ? (
+                <div className="space-y-2">
+                  {item.schedule.map((slot) => (
+                    <div
+                      key={slot.id}
+                      className="rounded-md border border-[#d6e3fb] bg-[#f8fbff] px-3 py-2 text-xs text-[#1f3f93]"
+                    >
+                      {formatScheduleLabel(slot)}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-[#6f84b4]">No schedule added yet.</p>
+              )}
             </div>
 
             <div className="mt-4 grid grid-cols-1 gap-2 border-t border-[#e2ecff] pt-3">
@@ -1642,6 +1671,26 @@ const ClassesContentPage = () => {
 
       {activeTab === 'Content Library' && (
         <div className="space-y-4">
+          <section className="rounded-[10px] border border-[#d6e3fb] bg-white p-4">
+            <h3 className="text-[24px] font-semibold text-[#1f3f93]">Content Stats</h3>
+            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+              {[
+                { label: 'Lessons', value: Number(contentStats?.lessons || 0) },
+                { label: 'Videos', value: Number(contentStats?.videos || 0) },
+                { label: 'Documents', value: Number(contentStats?.documents || 0) },
+                { label: 'Assignments', value: Number(contentStats?.assignments || 0) },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="rounded-lg border border-[#d6e3fb] bg-[#f8fbff] px-3 py-2"
+                >
+                  <p className="text-xs text-[#5f79af]">{item.label}</p>
+                  <p className="text-2xl font-semibold text-[#1f3f93]">{item.value}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
           <section className="rounded-[10px] border border-[#d6e3fb] bg-white p-4">
             <h3 className="text-[32px] font-semibold text-[#1f3f93]">Upload New Content</h3>
 
@@ -2678,7 +2727,12 @@ const ClassesContentPage = () => {
                 key={subject.id}
                 className="flex items-center justify-between rounded-md border border-[#d6e3fb] bg-[#f8fbff] px-3 py-2 text-[#17367a]"
               >
-                <span>{subject.name}</span>
+                <span>
+                  {subject.name}
+                  <span className="ml-2 text-xs text-[#6f84b4]">
+                    {Number(subject?.classCount || 0)} classes
+                  </span>
+                </span>
                 <button
                   type="button"
                   onClick={() => handleDeleteSubject(subject)}
@@ -2714,7 +2768,12 @@ const ClassesContentPage = () => {
                 key={grade.id}
                 className="flex items-center justify-between rounded-md border border-[#d6e3fb] bg-[#f8fbff] px-3 py-2 text-[#17367a]"
               >
-                <span>{grade.label}</span>
+                <span>
+                  {grade.label}
+                  <span className="ml-2 text-xs text-[#6f84b4]">
+                    {Number(grade?.classCount || 0)} classes
+                  </span>
+                </span>
                 <button
                   type="button"
                   onClick={() => handleDeleteGrade(grade)}
