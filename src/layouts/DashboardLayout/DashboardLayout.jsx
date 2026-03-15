@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router';
-import { BarChart3, BookOpen, CalendarDays, Gauge, Users } from 'lucide-react';
+import { BarChart3, BookOpen, CalendarDays, Gauge, Users, Video } from 'lucide-react';
 import logo from '../../assets/logo.png';
 import { useAuth } from '../../features/auth/context/AuthContext';
 
@@ -8,6 +8,7 @@ const navItems = [
   { label: 'User Management', icon: Users, to: '/users' },
   { label: 'Classes & Content', icon: BookOpen, to: '/classes-content' },
   { label: 'Analytics', icon: BarChart3, to: '/analytics' },
+  { label: 'Live Sessions', icon: Video, to: '/live-sessions' },
   { label: 'Timetable', icon: CalendarDays, to: '/timetable' },
 ];
 
@@ -23,11 +24,14 @@ const DashboardLayout = () => {
     '/classes-content': 'Classes & Content',
     '/analytics': 'Analytics',
     '/timetable': 'Timetable',
+    '/live-sessions': 'Live Sessions',
   };
   const pageTitle = location.pathname.startsWith('/analytics')
     ? 'Analytics'
     : location.pathname.startsWith('/timetable')
     ? 'Timetable'
+    : location.pathname.startsWith('/live-sessions')
+    ? 'Live Sessions'
     : pageTitleMap[location.pathname] || 'Dashboard Overview';
 
   return (

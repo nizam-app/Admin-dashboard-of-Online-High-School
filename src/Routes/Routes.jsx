@@ -10,6 +10,7 @@ import AnalyticsTeacherActivityPage from '../features/analytics/pages/AnalyticsT
 import TimetablePage from '../features/timetable/pages/TimetablePage';
 import GeneralTimetablePage from '../features/timetable/pages/GeneralTimetablePage';
 import ClassSpecificTimetablePage from '../features/timetable/pages/ClassSpecificTimetablePage';
+import LiveSessionsPage from '../features/liveSessions/pages/LiveSessionsPage';
 import LoginPage from '../features/auth/pages/LoginPage';
 import RequireAuth from '../features/auth/components/RequireAuth';
 import GuestOnly from '../features/auth/components/GuestOnly';
@@ -78,6 +79,10 @@ export const router = createBrowserRouter([
                 Component: ClassSpecificTimetablePage,
               },
             ],
+          },
+          {
+            path: 'live-sessions',
+            Component: LiveSessionsPage,
           },
         ],
       },
