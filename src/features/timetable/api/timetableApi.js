@@ -5,11 +5,21 @@ export const getTimetableEntries = async ({ gradeId, classId } = {}) => {
   if (gradeId) params.gradeId = gradeId;
   if (classId) params.classId = classId;
 
-  const response = await http.get('/admin/timetable/entries', { params });
+  // Backend now exposes a single /admin/timetable endpoint that returns
+  // both metadata (teachers/subjects/grades/classes) and timetable entries.
+  const response = await http.get('/admin/timetable', { params });
   const payload = response?.data || {};
-  const data = payload?.data ?? payload;
+  const root = payload?.data ?? payload;
 
-  return Array.isArray(data) ? data : [];
+  const entries =
+    root?.entries ||
+    root?.timetable ||
+    root?.items ||
+    root?.rows ||
+    root?.data ||
+    [];
+
+  return Array.isArray(entries) ? entries : [];
 };
 
 export const createTimetableEntry = async (payload) => {
@@ -29,7 +39,9 @@ export const createTimetableEntry = async (payload) => {
 };
 
 export const getTimetableMeta = async () => {
-  const response = await http.get('/admin/timetable/meta');
+  // /admin/timetable returns the full meta object: teachers, subjects,
+  // grades, classes, and possibly entries. For meta we just return root.
+  const response = await http.get('/admin/timetable');
   const payload = response?.data || {};
   return payload?.data ?? payload;
 };

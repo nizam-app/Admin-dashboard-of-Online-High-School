@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, Check, Clock3, Eye, Pencil, Play, Users, Video, X } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CalendarDays, Check, Clock3, Download, Eye, Info, Mic, Pencil, Play, Users, Video, X } from 'lucide-react';
 import Swal from 'sweetalert2';
-import { approveLiveSession, cancelLiveSession, rejectLiveSession } from '../api/liveSessionsApi';
-import { useLiveSessions, useLiveSessionsStats } from '../hooks/useLiveSessions';
+import {
+  approveLiveSession,
+  cancelLiveSession,
+  createLiveSession,
+  rejectLiveSession,
+  updateLiveSession,
+  updateStudentAttendance,
+} from '../api/liveSessionsApi';
+import { getGrades, getSubjects, getUsers } from '../../users/api/usersApi';
+import { useLiveSessions, useLiveSessionsStats, useSessionAttendance, useSessionDetails } from '../hooks/useLiveSessions';
 
 const metrics = [
   { key: 'todaySessions', label: "Today's Sessions", icon: Video, valueColor: 'text-[#183e95]', iconColor: 'text-[#133f94]' },
@@ -81,11 +89,39 @@ const getActionIcon = (label) => {
   return null;
 };
 
+const INITIAL_SESSION_FORM = {
+  title: '',
+  subject: '',
+  grade: '',
+  teacher: '',
+  teacherId: '',
+  className: '',
+  date: '',
+  time: '',
+  duration: '',
+  meetingLink: '',
+};
+
 const LiveSessionsPage = () => {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('all');
   const [page, setPage] = useState(1);
+  const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
+  const [editingSession, setEditingSession] = useState(null);
+  const [sessionFormValues, setSessionFormValues] = useState(INITIAL_SESSION_FORM);
+  const [sessionFormError, setSessionFormError] = useState('');
+  const [joinModalSession, setJoinModalSession] = useState(null);
+  const [joinEnableCamera, setJoinEnableCamera] = useState(true);
+  const [joinEnableMic, setJoinEnableMic] = useState(true);
+  const [trackModalSession, setTrackModalSession] = useState(null);
   const { data, isLoading, isError } = useLiveSessionsStats();
+  const {
+    data: attendanceData,
+    isLoading: isAttendanceLoading,
+    isError: isAttendanceError,
+    refetch: refetchAttendance,
+  } = useSessionAttendance(trackModalSession?.id);
+  const { data: sessionDetails } = useSessionDetails(trackModalSession?.id);
   const {
     data: sessionsResponse = {
       items: [],
@@ -115,6 +151,200 @@ const LiveSessionsPage = () => {
       queryClient.invalidateQueries({ queryKey: ['live-sessions-stats'] });
     },
   });
+  const createSessionMutation = useMutation({
+    mutationFn: createLiveSession,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['live-sessions'] });
+      queryClient.invalidateQueries({ queryKey: ['live-sessions-stats'] });
+      closeSessionModal();
+    },
+  });
+  const updateSessionMutation = useMutation({
+    mutationFn: ({ id, payload }) => updateLiveSession(id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['live-sessions'] });
+      queryClient.invalidateQueries({ queryKey: ['live-sessions-stats'] });
+      closeSessionModal();
+    },
+  });
+  const updateAttendanceMutation = useMutation({
+    mutationFn: ({ sessionId, studentId, status }) =>
+      updateStudentAttendance(sessionId, studentId, { status }),
+    onSuccess: (_, { sessionId }) => {
+      queryClient.invalidateQueries({ queryKey: ['live-sessions-attendance', sessionId] });
+      queryClient.invalidateQueries({ queryKey: ['live-sessions'] });
+      queryClient.invalidateQueries({ queryKey: ['live-sessions-stats'] });
+    },
+  });
+
+  const { data: gradeOptions = [] } = useQuery({
+    queryKey: ['live-sessions-form-grades'],
+    queryFn: getGrades,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: subjectOptions = [] } = useQuery({
+    queryKey: ['live-sessions-form-subjects'],
+    queryFn: getSubjects,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: teacherUsers } = useQuery({
+    queryKey: ['live-sessions-form-teachers'],
+    queryFn: () => getUsers({ role: 'teacher', status: 'active', page: 1, limit: 100 }),
+    staleTime: 60 * 1000,
+  });
+
+  const teacherOptions = useMemo(
+    () =>
+      Array.isArray(teacherUsers?.users)
+        ? teacherUsers.users.map((u) => ({
+            id: u.id,
+            name: u.name || u.fullName || u.username || u.email || 'Teacher',
+          }))
+        : [],
+    [teacherUsers?.users]
+  );
+
+  const openSessionModal = (session = null) => {
+    setEditingSession(session || null);
+    if (session) {
+      const rawDate = session.date ?? '';
+      const dateOnly =
+        typeof rawDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(rawDate)
+          ? rawDate.slice(0, 10)
+          : rawDate;
+      const rawTime = session.time ?? '';
+      const timeOnly =
+        typeof rawTime === 'string' && /\d{1,2}:\d{2}/.test(rawTime)
+          ? (rawTime.match(/\d{1,2}:\d{2}/)?.[0] ?? rawTime)
+          : rawTime;
+      setSessionFormValues({
+        title: session.title ?? '',
+        subject: session.subject ?? '',
+        grade: session.grade ?? '',
+        teacher: session.teacher ?? '',
+        teacherId: session.teacherId ?? '',
+        className: session.className ?? '',
+        date: dateOnly,
+        time: timeOnly,
+        duration: session.duration ?? '',
+        meetingLink: session.meetingLink ?? '',
+      });
+    } else {
+      setSessionFormValues({ ...INITIAL_SESSION_FORM });
+    }
+    setSessionFormError('');
+    setIsSessionModalOpen(true);
+  };
+
+  const closeSessionModal = () => {
+    if (createSessionMutation.isPending || updateSessionMutation.isPending) return;
+    setIsSessionModalOpen(false);
+    setEditingSession(null);
+    setSessionFormValues(INITIAL_SESSION_FORM);
+    setSessionFormError('');
+  };
+
+  const handleSessionFormChange = (key, value) => {
+    setSessionFormValues((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleTeacherChange = (value) => {
+    const selected = teacherOptions.find((t) => String(t.id) === String(value));
+    setSessionFormValues((prev) => ({
+      ...prev,
+      teacherId: value,
+      teacher: selected?.name || prev.teacher,
+    }));
+  };
+
+  const handleSessionSubmit = (event) => {
+    event.preventDefault();
+    setSessionFormError('');
+    if (updateSessionMutation.isPending || createSessionMutation.isPending) return;
+    const { title, subject, grade, teacher, teacherId, className, date, time, duration, meetingLink } =
+      sessionFormValues;
+    if (!String(title || '').trim()) {
+      setSessionFormError('Title is required.');
+      return;
+    }
+    if (editingSession?.id) {
+      const sessionId = editingSession.id;
+      updateSessionMutation.mutate(
+        {
+          id: sessionId,
+          payload: {
+            title: title.trim(),
+            subject,
+            grade,
+            teacher,
+            teacherId,
+            className,
+            date,
+            time,
+            duration,
+            meetingLink,
+          },
+        },
+        {
+          onSuccess: async () => {
+            await Swal.fire({
+              title: 'Updated',
+              text: 'Live session updated successfully.',
+              icon: 'success',
+              confirmButtonColor: '#1f3f93',
+            });
+          },
+          onError: (error) => {
+            const data = error?.response?.data;
+            const message =
+              (typeof data?.message === 'string' && data.message) ||
+              (Array.isArray(data?.errors) && data.errors[0]?.message) ||
+              data?.error ||
+              error?.message ||
+              'Failed to update session.';
+            setSessionFormError(message);
+          },
+        }
+      );
+    } else {
+      createSessionMutation.mutate(
+        {
+          title: title.trim(),
+          subject,
+          grade,
+          teacher,
+          teacherId,
+          className,
+          date,
+          time,
+          duration,
+          meetingLink,
+        },
+        {
+          onSuccess: async () => {
+            await Swal.fire({
+              title: 'Created',
+              text: 'Live session created successfully.',
+              icon: 'success',
+              confirmButtonColor: '#1f3f93',
+            });
+          },
+          onError: (error) => {
+            const data = error?.response?.data;
+            const message =
+              (typeof data?.message === 'string' && data.message) ||
+              (Array.isArray(data?.errors) && data.errors[0]?.message) ||
+              data?.error ||
+              error?.message ||
+              'Failed to create session.';
+            setSessionFormError(message);
+          },
+        }
+      );
+    }
+  };
 
   const stats = useMemo(() => {
     if (!data || typeof data !== 'object') return {};
@@ -153,6 +383,61 @@ const LiveSessionsPage = () => {
     [sessionsResponse]
   );
 
+  const trackAttendance = useMemo(() => {
+    if (!attendanceData) return { students: [], total: 0, present: 0, absent: 0, attendanceRate: 0 };
+    return {
+      students: Array.isArray(attendanceData.students) ? attendanceData.students : [],
+      total: Number(attendanceData.total ?? 0),
+      present: Number(attendanceData.present ?? 0),
+      absent: Number(attendanceData.absent ?? 0),
+      attendanceRate: Number(attendanceData.attendanceRate ?? 0),
+    };
+  }, [attendanceData]);
+
+  const trackAttendanceFallback = useMemo(() => {
+    if (!trackModalSession) return null;
+    const total = Number(trackModalSession.studentCount ?? 0);
+    const present = Number(trackModalSession.joinedCount ?? 0);
+    const absent = Math.max(0, total - present);
+    const attendanceRate = Number(trackModalSession.attendance ?? 0) || (total > 0 ? Math.round((present / total) * 100) : 0);
+    const fromDetails = Array.isArray(sessionDetails?.enrolledStudents) ? sessionDetails.enrolledStudents : [];
+    const fromSession = Array.isArray(trackModalSession.enrolledStudents) ? trackModalSession.enrolledStudents : [];
+    const enrolled = fromDetails.length >= total ? fromDetails : fromSession.length >= total ? fromSession : fromDetails.length ? fromDetails : fromSession;
+    const getName = (i) => {
+      const e = enrolled[i];
+      if (e && (e.name || e.studentName)) return e.name || e.studentName || `Student ${i + 1}`;
+      if (typeof e === 'string') return e;
+      return `Student ${i + 1}`;
+    };
+    const students = [];
+    for (let i = 0; i < present; i++) {
+      students.push({
+        id: enrolled[i]?.id ?? `fallback-present-${i}`,
+        name: getName(i),
+        status: 'Present',
+        joinTime: '—',
+        participation: null,
+      });
+    }
+    for (let i = 0; i < absent; i++) {
+      const idx = present + i;
+      students.push({
+        id: enrolled[idx]?.id ?? `fallback-absent-${i}`,
+        name: getName(idx),
+        status: 'Absent',
+        joinTime: '—',
+        participation: null,
+      });
+    }
+    return { students, total, present, absent, attendanceRate };
+  }, [trackModalSession, sessionDetails]);
+
+  const trackDisplay = useMemo(() => {
+    if (isAttendanceError && trackAttendanceFallback) return trackAttendanceFallback;
+    if (!isAttendanceError && trackAttendance.total === 0 && trackAttendanceFallback?.total > 0) return trackAttendanceFallback;
+    return trackAttendance;
+  }, [isAttendanceError, trackAttendanceFallback, trackAttendance]);
+
   useEffect(() => {
     setPage(1);
   }, [activeTab]);
@@ -183,6 +468,23 @@ const LiveSessionsPage = () => {
   const handleActionClick = async (session, actionLabel) => {
     const normalizedLabel = String(actionLabel || '').toLowerCase();
     if (!session?.id || isActionPending(actionLabel)) return;
+
+    if (normalizedLabel.includes('edit')) {
+      openSessionModal(session);
+      return;
+    }
+
+    if (normalizedLabel.includes('join')) {
+      setJoinModalSession(session);
+      setJoinEnableCamera(true);
+      setJoinEnableMic(true);
+      return;
+    }
+
+    if (normalizedLabel.includes('track')) {
+      setTrackModalSession(session);
+      return;
+    }
 
     let config = null;
     let mutation = null;
@@ -279,7 +581,13 @@ const LiveSessionsPage = () => {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <button className="rounded-lg bg-[#1f3f93] px-3 py-2 text-xs font-semibold text-white">Add Session</button>
+        <button
+          type="button"
+          onClick={() => openSessionModal()}
+          className="ml-auto rounded-lg bg-[#1f3f93] px-4 py-2 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(31,63,147,0.25)] transition hover:bg-[#163f9a]"
+        >
+          Create Session
+        </button>
       </div>
 
       <div className="rounded-xl border border-[#d9e6ff] bg-white px-3 py-2 shadow-[0_4px_18px_rgba(31,63,147,0.06)]">
@@ -480,6 +788,496 @@ const LiveSessionsPage = () => {
           </div>
         </div>
       </div>
+
+      {isSessionModalOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[#0a1d4a]/30 p-3">
+          <div className="w-full max-w-[520px] rounded-xl border border-[#d6e3fb] bg-white p-6 shadow-xl">
+            <form className="space-y-4" onSubmit={handleSessionSubmit}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-[24px] font-semibold text-[#1f3f93]">
+                  {editingSession ? 'Edit Session' : 'Create Session'}
+                </h2>
+                <button
+                  type="button"
+                  onClick={closeSessionModal}
+                  disabled={createSessionMutation.isPending || updateSessionMutation.isPending}
+                  className="rounded p-1 text-[#6f84b4] hover:bg-[#eef3ff] hover:text-[#1f3f93] disabled:opacity-50"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {sessionFormError && (
+                <p className="rounded-lg bg-[#ffe3e3] px-3 py-2 text-sm text-[#d01414]">{sessionFormError}</p>
+              )}
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Title *</label>
+                <input
+                  type="text"
+                  value={sessionFormValues.title}
+                  onChange={(e) => handleSessionFormChange('title', e.target.value)}
+                  placeholder="e.g. Algebra Basics"
+                  className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Subject</label>
+                  <select
+                    value={sessionFormValues.subject}
+                    onChange={(e) => handleSessionFormChange('subject', e.target.value)}
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] bg-white px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  >
+                    <option value="">Select subject</option>
+                    {subjectOptions.map((subject) => (
+                      <option key={subject} value={subject}>
+                        {subject}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Grade</label>
+                  <select
+                    value={sessionFormValues.grade}
+                    onChange={(e) => handleSessionFormChange('grade', e.target.value)}
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] bg-white px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  >
+                    <option value="">Select grade</option>
+                    {gradeOptions.map((grade) => (
+                      <option key={grade.id ?? grade.value ?? grade} value={grade.name ?? grade.label ?? grade}>
+                        {grade.name ?? grade.label ?? grade}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Class Name</label>
+                <input
+                  type="text"
+                  value={sessionFormValues.className}
+                  onChange={(e) => handleSessionFormChange('className', e.target.value)}
+                  placeholder="e.g. Grade 10 - Mathematics A"
+                  className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Instructor / Teacher</label>
+                <select
+                  value={sessionFormValues.teacherId}
+                  onChange={(e) => handleTeacherChange(e.target.value)}
+                  className="h-11 w-full rounded-lg border border-[#d6e3fb] bg-white px-3 text-sm outline-none focus:border-[#1f3f93]"
+                >
+                  <option value="">Select teacher</option>
+                  {teacherOptions.map((teacher) => (
+                    <option key={teacher.id} value={teacher.id}>
+                      {teacher.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Date</label>
+                  <input
+                    type="date"
+                    value={sessionFormValues.date}
+                    onChange={(e) => handleSessionFormChange('date', e.target.value)}
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">Time</label>
+                  <input
+                    type="time"
+                    value={sessionFormValues.time}
+                    onChange={(e) => handleSessionFormChange('time', e.target.value)}
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                    Duration (minutes)
+                  </label>
+                  <input
+                    type="text"
+                    value={sessionFormValues.duration}
+                    onChange={(e) => handleSessionFormChange('duration', e.target.value)}
+                    placeholder="e.g. 60"
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[14px] font-semibold text-[#1f3f93]">
+                    Zoom Meeting Link
+                  </label>
+                  <input
+                    type="url"
+                    value={sessionFormValues.meetingLink}
+                    onChange={(e) => handleSessionFormChange('meetingLink', e.target.value)}
+                    placeholder="https://zoom.us/j/..."
+                    className="h-11 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={closeSessionModal}
+                  disabled={createSessionMutation.isPending || updateSessionMutation.isPending}
+                  className="h-10 rounded-lg border border-[#d6e3fb] px-4 text-sm font-semibold text-[#1f3f93] hover:bg-[#eef3ff] disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={createSessionMutation.isPending || updateSessionMutation.isPending}
+                  className="h-10 rounded-lg bg-[#1f3f93] px-4 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(31,63,147,0.25)] hover:bg-[#163f9a] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {createSessionMutation.isPending || updateSessionMutation.isPending
+                    ? 'Saving...'
+                    : editingSession
+                      ? 'Update Session'
+                      : 'Create Session'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {joinModalSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0a1d4a]/50 p-4 backdrop-blur-md">
+          <div className="w-full max-w-[640px] rounded-2xl border-2 border-[#d6e3fb] bg-white p-6 shadow-[0_25px_50px_-12px_rgba(15,23,42,0.35)] ring-2 ring-[#1f3f93]/10">
+            <div className="flex items-center justify-between border-b border-[#e4ecff] pb-4">
+              <div>
+                <h2 className="text-[22px] font-bold text-[#1f3f93]">Join Live Session</h2>
+                <p className="mt-1 text-sm text-[#556b97]">You are about to join the live session.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setJoinModalSession(null)}
+                className="rounded-lg p-2 text-[#6f84b4] hover:bg-[#eef3ff] hover:text-[#1f3f93] focus:outline-none focus:ring-2 focus:ring-[#1f3f93]/30"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="mt-5 flex gap-4 rounded-xl border-2 border-[#c7d9f7] bg-[#eef5ff] p-5 shadow-sm">
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#1f3f93] text-white shadow-md">
+                <Video size={28} />
+              </span>
+              <div className="min-w-0 flex-1 space-y-1.5 text-sm">
+                <p className="text-base font-bold text-[#1f3f93]">{joinModalSession.title}</p>
+                <p className="flex items-center gap-1.5 text-[#556b97]">
+                  <Users size={14} className="text-[#7b8fb8]" />
+                  {joinModalSession.teacher}
+                </p>
+                <div className="flex flex-wrap items-center gap-2 text-[#6f84b4]">
+                  <span className="flex items-center gap-1">
+                    <CalendarDays size={14} />
+                    {joinModalSession.date}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock3 size={14} />
+                    {joinModalSession.time}
+                    {joinModalSession.duration ? ` (${joinModalSession.duration})` : ''}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[#def6e6] px-2.5 py-1 text-xs font-semibold text-[#0a8b45]">
+                    <span className="h-2 w-2 rounded-full bg-[#e11d48]" />
+                    Live
+                  </span>
+                  {joinModalSession.subject ? (
+                    <span className="rounded-full bg-[#eaf1ff] px-2.5 py-1 text-xs font-semibold text-[#1d5eff]">
+                      {joinModalSession.subject}
+                    </span>
+                  ) : null}
+                  {joinModalSession.grade ? (
+                    <span className="rounded-full bg-[#eaf1ff] px-2.5 py-1 text-xs font-semibold text-[#1d5eff]">
+                      {joinModalSession.grade}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="text-[#556b97]">
+                  {joinModalSession.joinedCount ?? 0}/{joinModalSession.studentCount ?? 0} present
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <p className="text-[15px] font-bold text-[#1f3f93]">Audio &amp; Video Settings</p>
+              <div className="flex flex-col gap-3 rounded-lg border border-[#d6e3fb] bg-[#fafbff] p-4">
+                <label className="flex cursor-pointer items-center gap-3 rounded-lg py-1 hover:bg-white/60">
+                  <input
+                    type="checkbox"
+                    checked={joinEnableCamera}
+                    onChange={(e) => setJoinEnableCamera(e.target.checked)}
+                    className="h-5 w-5 rounded border-[#d6e3fb] text-[#1f3f93] focus:ring-2 focus:ring-[#1f3f93]/30"
+                  />
+                  <Video size={20} className="text-[#6f84b4]" />
+                  <span className="text-sm font-semibold text-[#17367a]">Enable Camera</span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-3 rounded-lg py-1 hover:bg-white/60">
+                  <input
+                    type="checkbox"
+                    checked={joinEnableMic}
+                    onChange={(e) => setJoinEnableMic(e.target.checked)}
+                    className="h-5 w-5 rounded border-[#d6e3fb] text-[#1f3f93] focus:ring-2 focus:ring-[#1f3f93]/30"
+                  />
+                  <Mic size={20} className="text-[#6f84b4]" />
+                  <span className="text-sm font-semibold text-[#17367a]">Enable Microphone</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-3 rounded-xl border-2 border-[#fde68a] bg-[#fef9c3] px-4 py-3">
+              <Info size={22} className="shrink-0 text-[#1f3f93]" />
+              <p className="text-sm font-medium text-[#92400e]">
+                You are joining as an <strong>Admin Observer</strong>. You&apos;ll have access to monitor the session,
+                view attendance, and manage participants.
+              </p>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3 border-t border-[#e4ecff] pt-5">
+              <button
+                type="button"
+                onClick={() => setJoinModalSession(null)}
+                className="h-12 min-w-[100px] rounded-xl border-2 border-[#c7d9f7] bg-white px-5 text-sm font-bold text-[#374151] shadow-sm hover:bg-[#f3f7ff] hover:border-[#1f3f93]/40 focus:outline-none focus:ring-2 focus:ring-[#1f3f93]/20"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setJoinModalSession(null);
+                  Swal.fire({
+                    title: 'Joining...',
+                    text: 'Redirecting to the live session.',
+                    icon: 'info',
+                    timer: 1500,
+                    showConfirmButton: false,
+                    confirmButtonColor: '#1f3f93',
+                  });
+                }}
+                className="flex h-12 min-w-[160px] items-center justify-center gap-2 rounded-xl bg-[#1f3f93] px-5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(31,63,147,0.4)] hover:bg-[#163f9a] focus:outline-none focus:ring-2 focus:ring-[#1f3f93]/50 focus:ring-offset-2"
+              >
+                <Video size={18} />
+                Join Session Now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {trackModalSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0a1d4a]/50 p-4 backdrop-blur-md">
+          <div className="flex max-h-[90vh] w-full max-w-[720px] flex-col rounded-2xl border-2 border-[#d6e3fb] bg-white shadow-[0_25px_50px_-12px_rgba(15,23,42,0.35)] ring-2 ring-[#1f3f93]/10">
+            <div className="shrink-0 border-b border-[#e4ecff] px-6 py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-[22px] font-bold text-[#1f3f93]">{trackModalSession.title}</h2>
+                  <p className="mt-1 text-sm text-[#556b97]">
+                    {typeof trackModalSession.date === 'string' && trackModalSession.date.length >= 10
+                      ? trackModalSession.date.slice(0, 10)
+                      : trackModalSession.date}{' '}
+                    at {trackModalSession.time ?? '—'} — {trackModalSession.teacher}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTrackModalSession(null)}
+                  className="rounded-lg p-2 text-[#6f84b4] hover:bg-[#eef3ff] hover:text-[#1f3f93] focus:outline-none focus:ring-2 focus:ring-[#1f3f93]/30"
+                >
+                  <X size={22} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              {isAttendanceLoading ? (
+                <div className="flex items-center justify-center py-12 text-[#6f84b4]">
+                  Loading attendance...
+                </div>
+              ) : (
+                <>
+                  {isAttendanceError ? (
+                    <div className="mb-4 rounded-xl border border-[#fde68a] bg-[#fef9c3] px-4 py-2.5 text-sm text-[#92400e]">
+                      Attendance list could not be loaded from the server. Showing summary from session (Total: {trackModalSession.studentCount ?? 0}, Joined: {trackModalSession.joinedCount ?? 0}).
+                    </div>
+                  ) : null}
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="rounded-xl border-2 border-[#d6e3fb] bg-[#fafbff] p-4 text-center">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#6f84b4]">Total Students</p>
+                      <p className="mt-2 text-2xl font-bold text-[#1f3f93]">{trackDisplay.total}</p>
+                    </div>
+                    <div className="rounded-xl border-2 border-[#b8e6cc] bg-[#dcfce7] p-4 text-center">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#0a8b45]">Present</p>
+                      <p className="mt-2 text-2xl font-bold text-[#0a8b45]">{trackDisplay.present}</p>
+                    </div>
+                    <div className="rounded-xl border-2 border-[#fecaca] bg-[#fee2e2] p-4 text-center">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#b91c1c]">Absent</p>
+                      <p className="mt-2 text-2xl font-bold text-[#b91c1c]">{trackDisplay.absent}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5">
+                    <p className="mb-2 text-sm font-semibold text-[#556b97]">Attendance Rate</p>
+                    <div className="flex items-center gap-3">
+                      <div className="h-3 flex-1 overflow-hidden rounded-full bg-[#dfeafe]">
+                        <div
+                          className="h-full rounded-full bg-[#294697] transition-[width]"
+                          style={{
+                            width: `${Math.max(0, Math.min(100, trackDisplay.attendanceRate))}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="text-sm font-bold text-[#1f3f93]">{trackDisplay.attendanceRate}%</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-6">
+                    <p className="mb-3 text-[15px] font-bold text-[#1f3f93]">Student Attendance</p>
+                    <div className="overflow-hidden rounded-xl border-2 border-[#d6e3fb]">
+                      <div className="max-h-[280px] overflow-y-auto">
+                        <table className="w-full min-w-[500px] border-collapse text-left text-sm">
+                          <thead className="sticky top-0 bg-[#eef4ff] text-[#1f3f93]">
+                            <tr>
+                              <th className="px-4 py-3 font-semibold">Student Name</th>
+                              <th className="px-4 py-3 font-semibold">Status</th>
+                              <th className="px-4 py-3 font-semibold">Join Time</th>
+                              <th className="px-4 py-3 font-semibold">Participation</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white">
+                            {trackDisplay.students.length === 0 ? (
+                              <tr>
+                                <td colSpan={4} className="px-4 py-8 text-center text-[#6f84b4]">
+                                  No students in this session yet.
+                                </td>
+                              </tr>
+                            ) : (
+                              trackDisplay.students.map((row) => {
+                                const isFallback = String(row.id).startsWith('fallback-');
+                                const isUpdating =
+                                  !isFallback &&
+                                  updateAttendanceMutation.isPending &&
+                                  updateAttendanceMutation.variables?.studentId === row.id;
+                                return (
+                                  <tr key={row.id} className="border-t border-[#e4ecff] hover:bg-[#f7faff]">
+                                    <td className="px-4 py-3 font-medium text-[#17367a]">{row.name}</td>
+                                    <td className="px-4 py-3">
+                                      {isFallback ? (
+                                        <span
+                                          className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                            row.status === 'Present'
+                                              ? 'bg-[#dcfce7] text-[#0a8b45]'
+                                              : 'bg-[#fee2e2] text-[#b91c1c]'
+                                          }`}
+                                        >
+                                          {row.status}
+                                        </span>
+                                      ) : (
+                                        <>
+                                          <select
+                                            value={row.status}
+                                            onChange={(e) => {
+                                              const newStatus = e.target.value;
+                                              if (newStatus === row.status) return;
+                                              updateAttendanceMutation.mutate({
+                                                sessionId: trackModalSession.id,
+                                                studentId: row.id,
+                                                status: newStatus,
+                                              });
+                                            }}
+                                            disabled={isUpdating}
+                                            className={`rounded-lg border px-2 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#1f3f93]/30 disabled:opacity-60 ${
+                                              row.status === 'Present'
+                                                ? 'border-[#86efac] bg-[#dcfce7] text-[#0a8b45]'
+                                                : 'border-[#fca5a5] bg-[#fee2e2] text-[#b91c1c]'
+                                            }`}
+                                          >
+                                            <option value="Present">Present</option>
+                                            <option value="Absent">Absent</option>
+                                          </select>
+                                          {isUpdating ? (
+                                            <span className="ml-2 text-xs text-[#6f84b4]">Updating...</span>
+                                          ) : null}
+                                        </>
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-3 text-[#556b97]">{row.joinTime || '—'}</td>
+                                    <td className="px-4 py-3">
+                                      {row.participation != null ? (
+                                        <div className="flex items-center gap-2">
+                                          <div className="h-2 w-24 overflow-hidden rounded-full bg-[#dfeafe]">
+                                            <div
+                                              className="h-full rounded-full bg-[#294697]"
+                                              style={{ width: `${row.participation}%` }}
+                                            />
+                                          </div>
+                                          <span className="text-xs font-semibold text-[#1f3f93]">{row.participation}%</span>
+                                        </div>
+                                      ) : (
+                                        <span className="text-[#9ca3af]">—</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="shrink-0 border-t border-[#e4ecff] px-6 py-4">
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setTrackModalSession(null)}
+                  className="h-11 rounded-xl border-2 border-[#c7d9f7] bg-white px-5 text-sm font-bold text-[#374151] shadow-sm hover:bg-[#f3f7ff] hover:border-[#1f3f93]/40 focus:outline-none focus:ring-2 focus:ring-[#1f3f93]/20"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    Swal.fire({
+                      title: 'Export Report',
+                      text: 'Attendance report will be downloaded.',
+                      icon: 'info',
+                      timer: 1500,
+                      showConfirmButton: false,
+                      confirmButtonColor: '#1f3f93',
+                    });
+                  }}
+                  className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#1f3f93] px-5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(31,63,147,0.4)] hover:bg-[#163f9a] focus:outline-none focus:ring-2 focus:ring-[#1f3f93]/50 focus:ring-offset-2"
+                >
+                  <Download size={18} />
+                  Export Report
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
