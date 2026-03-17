@@ -77,7 +77,10 @@ const normalizeClassItem = (item, index) => {
       )}`
   ).trim();
   const scheduleRaw = Array.isArray(pick(item, ['schedule'], [])) ? pick(item, ['schedule'], []) : [];
+  const isOverriddenSlot = (slot) =>
+    slot?.isOverride === true || slot?.overridden === true || Boolean(slot?.is_override);
   const schedule = scheduleRaw
+    .filter((slot) => !isOverriddenSlot(slot))
     .map((slot, slotIndex) => ({
       id: toObjectId(slot?._id || slot?.id) || `slot-${index}-${slotIndex}`,
       day: String(pick(slot, ['day'], '')).trim().toLowerCase(),

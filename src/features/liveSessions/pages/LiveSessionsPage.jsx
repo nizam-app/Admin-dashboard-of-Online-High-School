@@ -727,9 +727,9 @@ const LiveSessionsPage = () => {
                     ) : null}
                   </div>
 
-                  <div className="flex flex-col gap-2 xl:w-[120px]">
-                    {session.actions.length > 0 ? (
-                      session.actions.map((action) => {
+                  {session.actions.length > 0 ? (
+                    <div className="flex flex-col gap-2 xl:w-[120px]">
+                      {session.actions.map((action) => {
                         const ActionIcon = getActionIcon(action.label);
 
                         return (
@@ -747,17 +747,9 @@ const LiveSessionsPage = () => {
                             {isActionPending(action.label) ? getActionPendingLabel(action.label) : action.label}
                           </button>
                         );
-                      })
-                    ) : (
-                      <button
-                        type="button"
-                        className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-[12px] bg-[#eaf1ff] px-4 py-2 text-sm font-semibold text-[#2049a4]"
-                      >
-                        <Eye size={16} />
-                        View
-                      </button>
-                    )}
-                  </div>
+                      })}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             );

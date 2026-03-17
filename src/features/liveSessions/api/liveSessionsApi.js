@@ -49,6 +49,10 @@ const normalizeActions = (value, status) => {
   }
 
   const normalizedStatus = String(status || '').toLowerCase();
+  if (normalizedStatus.includes('completed')) {
+    // No row-level actions for completed sessions.
+    return [];
+  }
   if (normalizedStatus.includes('pending')) {
     return [
       { label: 'Approve', variant: 'success' },

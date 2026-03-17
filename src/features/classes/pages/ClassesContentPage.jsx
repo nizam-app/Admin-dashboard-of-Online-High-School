@@ -9,6 +9,7 @@ import {
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { getUsers } from '../../users/api/usersApi';
+import { getTimetableEntries } from '../../timetable/api/timetableApi';
 import {
   createAssignment,
   createClass,
@@ -229,6 +230,30 @@ const ClassesContentPage = () => {
     enabled: activeTab === 'Assignments',
   });
 
+  const { data: lessonsForCountResponse = { items: [], pagination: {} } } = useQuery({
+    queryKey: ['classes-content-lessons-for-count'],
+    queryFn: () => getLessons({ page: 1, limit: 1000, status: 'all', contentType: 'all' }),
+    staleTime: 60 * 1000,
+    retry: 1,
+    enabled: activeTab === 'Classes',
+  });
+
+  const { data: assignmentsForCountResponse = { items: [], pagination: {} } } = useQuery({
+    queryKey: ['classes-content-assignments-for-count'],
+    queryFn: () => getAssignments({ page: 1, limit: 1000, status: 'all' }),
+    staleTime: 60 * 1000,
+    retry: 1,
+    enabled: activeTab === 'Classes',
+  });
+
+  const { data: timetableEntriesForClasses = [] } = useQuery({
+    queryKey: ['timetable-entries-for-class-cards'],
+    queryFn: () => getTimetableEntries({}),
+    staleTime: 60 * 1000,
+    retry: 1,
+    enabled: activeTab === 'Classes',
+  });
+
   const createClassMutation = useMutation({
     mutationFn: createClass,
     onSuccess: () => {
@@ -336,6 +361,7 @@ const ClassesContentPage = () => {
       setRecentLessonsPage(1);
       queryClient.invalidateQueries({ queryKey: ['classes-content-classes'] });
       queryClient.invalidateQueries({ queryKey: ['classes-content-recent-lessons'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-content-lessons-for-count'] });
     },
     onError: (error) => {
       setClassActionError(error?.response?.data?.message || 'Failed to upload lesson');
@@ -349,6 +375,7 @@ const ClassesContentPage = () => {
       setIsLessonEditOpen(false);
       setEditingLesson(null);
       queryClient.invalidateQueries({ queryKey: ['classes-content-recent-lessons'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-content-lessons-for-count'] });
       queryClient.invalidateQueries({ queryKey: ['classes-content-classes'] });
     },
     onError: (error) => {
@@ -361,6 +388,7 @@ const ClassesContentPage = () => {
     onSuccess: () => {
       setClassActionError('');
       queryClient.invalidateQueries({ queryKey: ['classes-content-recent-lessons'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-content-lessons-for-count'] });
       queryClient.invalidateQueries({ queryKey: ['classes-content-classes'] });
     },
     onError: (error) => {
@@ -374,6 +402,7 @@ const ClassesContentPage = () => {
       setClassActionError('');
       queryClient.invalidateQueries({ queryKey: ['classes-content-assignments'] });
       queryClient.invalidateQueries({ queryKey: ['classes-content-assignments-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-content-assignments-for-count'] });
       queryClient.invalidateQueries({ queryKey: ['classes-content-classes'] });
     },
     onError: (error) => {
@@ -387,6 +416,7 @@ const ClassesContentPage = () => {
       setClassActionError('');
       queryClient.invalidateQueries({ queryKey: ['classes-content-assignments'] });
       queryClient.invalidateQueries({ queryKey: ['classes-content-assignments-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-content-assignments-for-count'] });
       queryClient.invalidateQueries({ queryKey: ['classes-content-classes'] });
     },
     onError: (error) => {
@@ -412,6 +442,7 @@ const ClassesContentPage = () => {
       setAssignmentStatusFilter('all');
       queryClient.invalidateQueries({ queryKey: ['classes-content-assignments'] });
       queryClient.invalidateQueries({ queryKey: ['classes-content-assignments-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-content-assignments-for-count'] });
       queryClient.invalidateQueries({ queryKey: ['classes-content-classes'] });
     },
     onError: (error) => {
@@ -504,6 +535,118 @@ const ClassesContentPage = () => {
     () => (Array.isArray(classesResponse?.items) ? classesResponse.items : []),
     [classesResponse?.items]
   );
+
+  const lessonCountByClassId = useMemo(() => {
+    const list = Array.isArray(lessonsForCountResponse?.items) ? lessonsForCountResponse.items : [];
+    const byClass = new Map();
+    const byGradeSubject = new Map();
+    list.forEach((lesson) => {
+      const cid = String(lesson?.classId || '').trim();
+      const gid = String(lesson?.gradeId || '').trim();
+      const sid = String(lesson?.subjectId || '').trim();
+      if (cid) {
+        byClass.set(cid, (byClass.get(cid) || 0) + 1);
+      }
+      if (gid && sid) {
+        const key = `${gid}|${sid}`;
+        byGradeSubject.set(key, (byGradeSubject.get(key) || 0) + 1);
+      }
+    });
+    return { byClass, byGradeSubject };
+  }, [lessonsForCountResponse?.items]);
+
+  const assignmentCountByClassId = useMemo(() => {
+    const list = Array.isArray(assignmentsForCountResponse?.items)
+      ? assignmentsForCountResponse.items
+      : [];
+    const byClass = new Map();
+    const byGradeSubject = new Map();
+    list.forEach((assignment) => {
+      const cid = String(assignment?.classId || '').trim();
+      const gid = String(assignment?.gradeId || '').trim();
+      const sid = String(assignment?.subjectId || '').trim();
+      if (cid) {
+        byClass.set(cid, (byClass.get(cid) || 0) + 1);
+      }
+      if (gid && sid) {
+        const key = `${gid}|${sid}`;
+        byGradeSubject.set(key, (byGradeSubject.get(key) || 0) + 1);
+      }
+    });
+    return { byClass, byGradeSubject };
+  }, [assignmentsForCountResponse?.items]);
+
+  const classesWithCounts = useMemo(
+    () =>
+      classes.map((c) => {
+        const id = String(c?.id || c?.deleteId || '').trim();
+        const gradeId = String(c?.gradeId || '').trim();
+        const subjectId = String(c?.subjectId || '').trim();
+        const gradeSubjectKey = gradeId && subjectId ? `${gradeId}|${subjectId}` : '';
+        const lessons =
+          lessonCountByClassId.byClass.get(id) ??
+          (gradeSubjectKey ? lessonCountByClassId.byGradeSubject.get(gradeSubjectKey) : null) ??
+          Number(c.lessons ?? 0);
+        const assignments =
+          assignmentCountByClassId.byClass.get(id) ??
+          (gradeSubjectKey ? assignmentCountByClassId.byGradeSubject.get(gradeSubjectKey) : null) ??
+          Number(c.assignments ?? 0);
+        return { ...c, lessons, assignments };
+      }),
+    [classes, lessonCountByClassId, assignmentCountByClassId]
+  );
+
+  const overriddenSlotKeys = useMemo(() => {
+    const entries = Array.isArray(timetableEntriesForClasses) ? timetableEntriesForClasses : [];
+    const dayNorm = (d) => {
+      const s = String(d || '').trim().toLowerCase();
+      const map = { monday: 'mon', tue: 'tue', tuesday: 'tue', wed: 'wed', wednesday: 'wed', thu: 'thu', thursday: 'thu', fri: 'fri', friday: 'fri', sat: 'sat', saturday: 'sat', sun: 'sun', sunday: 'sun' };
+      return map[s] || s.slice(0, 3);
+    };
+    const timeToMin = (t) => {
+      if (t == null) return null;
+      const str = String(t).trim();
+      const m = str.match(/^(\d{1,2}):(\d{2})/);
+      if (!m) return null;
+      return Number(m[1]) * 60 + Number(m[2]);
+    };
+    const set = new Set();
+    entries.forEach((entry) => {
+      if (!entry?.isOverride && !entry?.overridden) return;
+      const classId = String(entry?.classId ?? entry?.class_id ?? '').trim();
+      const day = dayNorm(entry?.day);
+      const min = timeToMin(entry?.startTime ?? entry?.start_time);
+      if (classId && day && min != null) set.add(`${classId}|${day}|${min}`);
+    });
+    return set;
+  }, [timetableEntriesForClasses]);
+
+  const classesWithFilteredSchedule = useMemo(
+    () => {
+      const timeToMin = (t) => {
+        if (t == null) return null;
+        const str = String(t).trim();
+        const m = str.match(/^(\d{1,2}):(\d{2})/);
+        if (!m) return null;
+        return Number(m[1]) * 60 + Number(m[2]);
+      };
+      return classesWithCounts.map((c) => {
+        const classId = String(c?.id ?? c?.deleteId ?? '').trim();
+        const dayNorm = (d) => String(d || '').trim().toLowerCase().slice(0, 3);
+        const schedule = Array.isArray(c.schedule) ? c.schedule : [];
+        const filtered = schedule.filter((slot) => {
+          const day = dayNorm(slot?.day);
+          const startMin = slot?.startMin != null ? Number(slot.startMin) : timeToMin(slot?.startTime ?? slot?.start_time);
+          if (day && startMin != null && overriddenSlotKeys.has(`${classId}|${day}|${startMin}`))
+            return false;
+          return true;
+        });
+        return { ...c, schedule: filtered };
+      });
+    },
+    [classesWithCounts, overriddenSlotKeys]
+  );
+
   const assignmentClassOptions = useMemo(
     () =>
       classes
@@ -1590,7 +1733,7 @@ const ClassesContentPage = () => {
           </div>
         )}
 
-        {classes.map((item) => {
+        {classesWithFilteredSchedule.map((item) => {
           const displayStudents = Number(item.students || 0);
           return (
           <article
