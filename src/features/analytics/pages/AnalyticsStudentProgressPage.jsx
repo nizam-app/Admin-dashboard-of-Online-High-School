@@ -11,13 +11,13 @@ const summaryCards = [
     iconBg: 'bg-[#ebf1fe] text-[#1f4ca8]',
     format: (value) => Number(value || 0).toLocaleString(),
   },
-  {
-    key: 'avgAttendance',
-    label: 'Avg Attendance',
-    icon: Activity,
-    iconBg: 'bg-[#daf6e6] text-[#039855]',
-    format: (value) => `${Number(value || 0).toFixed(1)}%`,
-  },
+  // {
+  //   key: 'avgAttendance',
+  //   label: 'Avg Attendance',
+  //   icon: Activity,
+  //   iconBg: 'bg-[#daf6e6] text-[#039855]',
+  //   format: (value) => `${Number(value || 0).toFixed(1)}%`,
+  // },
   {
     key: 'assignmentsCompleted',
     label: 'Assignments Completed',
@@ -139,7 +139,7 @@ const AnalyticsStudentProgressPage = () => {
                 <th className="px-4 py-3">Student Name</th>
                 <th className="px-4 py-3">Grade</th>
                 <th className="px-4 py-3">Assignments</th>
-                <th className="px-4 py-3">Attendance</th>
+                {/* <th className="px-4 py-3">Attendance</th> */}
                 <th className="px-4 py-3">Avg Score</th>
                 <th className="px-4 py-3">Status</th>
               </tr>
@@ -203,9 +203,9 @@ const AnalyticsStudentProgressPage = () => {
                         </div>
                       </td>
 
-                      <td className={`px-4 py-3 font-semibold ${attendanceClass(student.attendancePct)}`}>
+                      {/* <td className={`px-4 py-3 font-semibold ${attendanceClass(student.attendancePct)}`}>
                         {Number(student.attendancePct || 0).toFixed(0)}%
-                      </td>
+                      </td> */}
 
                       <td className="px-4 py-3 font-semibold text-[#17367a]">
                         {Number(student.avgScorePct || 0).toFixed(0)}%
