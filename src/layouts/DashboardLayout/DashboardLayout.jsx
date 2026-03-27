@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router';
-import { BarChart3, BookOpen, CalendarDays, Gauge, Users, Video } from 'lucide-react';
+import { BarChart3, Bell, BookOpen, CalendarDays, Gauge, Settings, Users, Video } from 'lucide-react';
 import logo from '../../assets/logo.png';
 import { useAuth } from '../../features/auth/context/AuthContext';
 
@@ -10,6 +10,8 @@ const navItems = [
   { label: 'Analytics', icon: BarChart3, to: '/analytics' },
   { label: 'Live Sessions', icon: Video, to: '/live-sessions' },
   { label: 'Timetable', icon: CalendarDays, to: '/timetable' },
+  { label: 'Notifications', icon: Bell, to: '/notifications' },
+  { label: 'Settings', icon: Settings, to: '/settings' },
 ];
 
 const DashboardLayout = () => {
@@ -25,6 +27,8 @@ const DashboardLayout = () => {
     '/analytics': 'Analytics',
     '/timetable': 'Timetable',
     '/live-sessions': 'Live Sessions',
+    '/notifications': 'Notifications Center',
+    '/settings': 'App Settings',
   };
   const pageTitle = location.pathname.startsWith('/analytics')
     ? 'Analytics'
@@ -32,6 +36,10 @@ const DashboardLayout = () => {
     ? 'Timetable'
     : location.pathname.startsWith('/live-sessions')
     ? 'Live Sessions'
+    : location.pathname.startsWith('/notifications')
+    ? 'Notifications Center'
+    : location.pathname.startsWith('/settings')
+    ? 'App Settings'
     : pageTitleMap[location.pathname] || 'Dashboard Overview';
 
   return (

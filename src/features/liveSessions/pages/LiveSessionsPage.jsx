@@ -528,33 +528,31 @@ const LiveSessionsPage = () => {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex w-full items-center justify-between gap-3">
+        <div className="w-full max-w-[520px] rounded-[10px] border border-[#d6e3fb] bg-white p-1">
+          <div className="grid grid-cols-4 gap-1">
+            {tabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={`h-10 rounded-md text-sm font-semibold ${
+                  activeTab === tab.key ? 'bg-[#1f3f93] text-white' : 'text-[#17367a]'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <button
           type="button"
           onClick={() => openSessionModal()}
-          className="ml-auto rounded-lg bg-[#1f3f93] px-4 py-2 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(31,63,147,0.25)] transition hover:bg-[#163f9a]"
+          className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-[#1f3f93] px-5 font-semibold leading-none text-white"
         >
           Create Session
         </button>
-      </div>
-
-      <div className="rounded-xl border border-[#d9e6ff] bg-white px-3 py-2 shadow-[0_4px_18px_rgba(31,63,147,0.06)]">
-        <div className="flex flex-wrap gap-2">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${
-                activeTab === tab.key
-                  ? 'bg-[#163f9a] text-white shadow-[0_6px_18px_rgba(22,63,154,0.18)]'
-                  : 'text-[#17367a]'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -904,3 +902,4 @@ const LiveSessionsPage = () => {
 };
 
 export default LiveSessionsPage;
+

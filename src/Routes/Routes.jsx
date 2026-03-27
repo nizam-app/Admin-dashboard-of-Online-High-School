@@ -11,6 +11,8 @@ import TimetablePage from '../features/timetable/pages/TimetablePage';
 import GeneralTimetablePage from '../features/timetable/pages/GeneralTimetablePage';
 import ClassSpecificTimetablePage from '../features/timetable/pages/ClassSpecificTimetablePage';
 import LiveSessionsPage from '../features/liveSessions/pages/LiveSessionsPage';
+import NotificationsPage from '../features/notifications/pages/NotificationsPage';
+import SettingsPage from '../features/settings/pages/SettingsPage';
 import LoginPage from '../features/auth/pages/LoginPage';
 import RequireAuth from '../features/auth/components/RequireAuth';
 import GuestOnly from '../features/auth/components/GuestOnly';
@@ -83,6 +85,14 @@ export const router = createBrowserRouter([
           {
             path: 'live-sessions',
             Component: LiveSessionsPage,
+          },
+          {
+            path: 'notifications',
+            Component: NotificationsPage,
+          },
+          {
+            path: 'settings',
+            Component: SettingsPage,
           },
         ],
       },
