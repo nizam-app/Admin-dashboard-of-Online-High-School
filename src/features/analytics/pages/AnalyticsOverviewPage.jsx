@@ -364,7 +364,7 @@ const AnalyticsOverviewPage = () => {
                       cx="50%"
                       cy="50%"
                       outerRadius={78}
-                      label={(entry) => `${entry.name}: ${entry.percent}%`}
+                      label={false}
                       labelLine={false}
                     >
                       {attendanceChartData.map((entry) => (

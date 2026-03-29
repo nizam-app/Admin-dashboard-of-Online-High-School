@@ -87,6 +87,29 @@ const getActionIcon = (label) => {
   return null;
 };
 
+const getSessionTimestamp = (session) => {
+  if (!session) return 0;
+  const rawDate = session.date || session.scheduledDate || session.startDate;
+  const rawTime = session.time || session.startTime;
+
+  if (rawDate) {
+    const candidate =
+      typeof rawDate === 'string' && rawDate.includes('T')
+        ? new Date(rawDate)
+        : rawTime
+          ? new Date(`${rawDate}T${rawTime}`)
+          : new Date(rawDate);
+    const timeValue = candidate.getTime();
+    return Number.isNaN(timeValue) ? 0 : timeValue;
+  }
+
+  const fallback =
+    session.createdAt || session.created_at || session.updatedAt || session.updated_at || session.timestamp;
+  if (!fallback) return 0;
+  const fallbackTime = new Date(fallback).getTime();
+  return Number.isNaN(fallbackTime) ? 0 : fallbackTime;
+};
+
 const INITIAL_SESSION_FORM = {
   title: '',
   subject: '',
@@ -373,8 +396,10 @@ const LiveSessionsPage = () => {
   const sessionRows = useMemo(
     () => {
       const items = Array.isArray(sessionsResponse?.items) ? sessionsResponse.items : [];
-      if (!hiddenSessionIds.length) return items;
-      return items.filter((session) => !hiddenSessionIds.includes(session.id));
+      const visibleItems = !hiddenSessionIds.length
+        ? items
+        : items.filter((session) => !hiddenSessionIds.includes(session.id));
+      return [...visibleItems].sort((a, b) => getSessionTimestamp(b) - getSessionTimestamp(a));
     },
     [sessionsResponse?.items, hiddenSessionIds]
   );
