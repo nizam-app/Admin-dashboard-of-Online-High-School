@@ -24,6 +24,38 @@ const normalizeId = (value) => {
   return null;
 };
 
+const normalizeBoolean = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['true', '1', 'yes', 'verified'].includes(normalized);
+  }
+  return false;
+};
+
+const hasBooleanValue = (value) => {
+  if (typeof value === 'boolean') return true;
+  if (typeof value === 'number') return value === 0 || value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['true', 'false', '1', '0', 'yes', 'no', 'verified', 'unverified'].includes(normalized);
+  }
+  return false;
+};
+
+const extractPreferredSubject = (user) => {
+  const directSubject = pick(user, ['subject', 'teachingSubject', 'mainSubject'], null);
+  if (directSubject) return directSubject;
+
+  const assignedSubjects = extractStringArray(
+    pick(user, ['assignedSubjects', 'subjects', 'teachingSubjects'], [])
+  );
+  if (assignedSubjects.length > 0) return assignedSubjects[0];
+
+  return null;
+};
+
 const normalizeUsers = (list) => {
   if (!Array.isArray(list)) return [];
 
@@ -50,29 +82,40 @@ const normalizeUsers = (list) => {
     return [];
   };
 
-  return list.map((user, index) => ({
-    id: normalizeId(pick(user, ['_id', 'id'], null)) || `row-${index}`,
-    name: pick(user, ['name', 'fullName', 'username'], 'N/A'),
-    email: pick(user, ['email', 'mail'], 'N/A'),
-    phone: pick(user, ['phone', 'mobile', 'phoneNumber'], 'N/A'),
-    role: pick(user, ['role', 'userRole'], 'N/A'),
-    gradeId: normalizeId(pick(user, ['gradeId', 'grade_id'], null)),
-    gradeLevel: pick(user, ['gradeLevel', 'grade_level'], null),
-    grade: pick(user, ['grade', 'classGrade', 'studentGrade'], null),
-    subjectId: normalizeId(pick(user, ['subjectId', 'subject_id'], null)),
-    subject: pick(user, ['subject', 'teachingSubject', 'mainSubject'], null),
-    assignedGradeIds: Array.isArray(user?.assignedGradeIds)
-      ? user.assignedGradeIds.map(normalizeId).filter(Boolean)
-      : [],
-    assignedGrades: Array.isArray(user?.assignedGrades) ? user.assignedGrades : [],
-    assignedSubjectIds: Array.isArray(user?.assignedSubjectIds)
-      ? user.assignedSubjectIds.map(normalizeId).filter(Boolean)
-      : [],
-    assignedSubjects: Array.isArray(user?.assignedSubjects) ? user.assignedSubjects : [],
-    assignedClasses: normalizeAssignedClasses(user),
-    status: pick(user, ['status', 'userStatus'], 'N/A'),
-    joinDate: pick(user, ['createdAt', 'joinDate', 'joinedAt'], null),
-  }));
+  return list.map((user, index) => {
+    const rawPhoneVerified = pick(
+      user,
+      ['phoneVerified', 'isPhoneVerified', 'verifiedPhone', 'phone_verified'],
+      undefined
+    );
+
+    return {
+      id: normalizeId(pick(user, ['_id', 'id'], null)) || `row-${index}`,
+      name: pick(user, ['name', 'fullName', 'username'], 'N/A'),
+      email: pick(user, ['email', 'mail'], 'N/A'),
+      phone: pick(user, ['phone', 'mobile', 'phoneNumber'], 'N/A'),
+      role: pick(user, ['role', 'userRole'], 'N/A'),
+      gradeId: normalizeId(pick(user, ['gradeId', 'grade_id'], null)),
+      gradeLevel: pick(user, ['gradeLevel', 'grade_level'], null),
+      grade: pick(user, ['grade', 'classGrade', 'studentGrade'], null),
+      subjectId: normalizeId(pick(user, ['subjectId', 'subject_id'], null)),
+      subject: extractPreferredSubject(user),
+      assignedGradeIds: Array.isArray(user?.assignedGradeIds)
+        ? user.assignedGradeIds.map(normalizeId).filter(Boolean)
+        : [],
+      assignedGrades: Array.isArray(user?.assignedGrades) ? user.assignedGrades : [],
+      assignedSubjectIds: Array.isArray(user?.assignedSubjectIds)
+        ? user.assignedSubjectIds.map(normalizeId).filter(Boolean)
+        : [],
+      assignedSubjects: extractStringArray(
+        pick(user, ['assignedSubjects', 'subjects', 'teachingSubjects'], [])
+      ),
+      phoneVerified: hasBooleanValue(rawPhoneVerified) ? normalizeBoolean(rawPhoneVerified) : null,
+      assignedClasses: normalizeAssignedClasses(user),
+      status: pick(user, ['status', 'userStatus'], 'N/A'),
+      joinDate: pick(user, ['createdAt', 'joinDate', 'joinedAt'], null),
+    };
+  });
 };
 
 const extractStringArray = (value) => {

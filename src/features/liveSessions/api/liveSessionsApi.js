@@ -165,6 +165,7 @@ const normalizeSession = (session, index) => {
   return {
     id: String(pick(session, ['id', '_id'], `session-${index}`)),
     title: toDisplayText(pick(session, ['title', 'name'], 'Untitled Session'), 'Untitled Session'),
+    createdAt: toDisplayText(pick(session, ['createdAt', 'created_at', 'createdOn', 'created_on'], ''), ''),
     status,
     subject: toDisplayText(pick(session, ['subject', 'topic', 'category'], ''), ''),
     grade: toDisplayText(pick(session, ['grade', 'gradeLevel', 'className', 'class'], ''), ''),
@@ -176,6 +177,10 @@ const normalizeSession = (session, index) => {
     joinedCount,
     attendance,
     enrolledStudents,
+    meetingLink: toDisplayText(
+      pick(session, ['meetingLink', 'zoomLink', 'meetingUrl', 'meetingURL', 'joinUrl', 'joinURL', 'url', 'link'], ''),
+      ''
+    ),
     rawStatus,
     actions: normalizeActions(pick(session, ['actions', 'buttons'], null), status),
   };
@@ -329,6 +334,7 @@ export const updateLiveSession = async (id, payload = {}) => {
   const date = payload.date ?? payload.scheduledDate ?? payload.sessionDate ?? '';
   const time = payload.time ?? payload.startTime ?? payload.scheduledTime ?? '';
   const durationRaw = payload.duration ?? payload.length ?? payload.durationMinutes ?? '';
+  const meetingLink = payload.meetingLink ?? payload.zoomLink ?? payload.meetingUrl ?? payload.link ?? '';
 
   const body = {
     title,
@@ -339,6 +345,7 @@ export const updateLiveSession = async (id, payload = {}) => {
     date,
     time,
     duration: durationRaw,
+    meetingLink,
   };
 
   const durationNum = typeof durationRaw === 'number' ? durationRaw : parseInt(String(durationRaw).replace(/\D/g, ''), 10);

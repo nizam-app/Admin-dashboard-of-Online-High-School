@@ -15,7 +15,9 @@ import { useLiveSessions, useLiveSessionsStats } from '../hooks/useLiveSessions'
 const metrics = [
   { key: 'todaySessions', label: "Today's Sessions", icon: Video, valueColor: 'text-[#183e95]', iconColor: 'text-[#133f94]' },
   { key: 'liveNow', label: 'Live', icon: Play, valueColor: 'text-[#05914b]', iconColor: 'text-[#1f7a3f]' },
+  { key: 'scheduledSessions', label: 'Scheduled', icon: CalendarDays, valueColor: 'text-[#1d5eff]', iconColor: 'text-[#1d5eff]' },
   { key: 'pendingApproval', label: 'Pending Approval', icon: Clock3, valueColor: 'text-[#d18400]', iconColor: 'text-[#c48a1f]' },
+  { key: 'completedSessions', label: 'Completed', icon: Check, valueColor: 'text-[#5b6b86]', iconColor: 'text-[#5b6b86]' },
   { key: 'avgAttendance', label: 'Avg Attendance', icon: Users, valueColor: 'text-[#183e95]', iconColor: 'text-[#133f94]' },
 ];
 
@@ -24,9 +26,37 @@ const tabs = [
   { key: 'today', label: 'Today' },
   { key: 'pending', label: 'Pending' },
   { key: 'live', label: 'Live' },
+  { key: 'scheduled', label: 'Scheduled' },
+  { key: 'completed', label: 'Completed' },
 ];
 
 const PAGE_SIZE = 5;
+
+const getSessionSortTime = (session) => {
+  const rawCreatedAt = String(session?.createdAt || '').trim();
+  if (rawCreatedAt) {
+    const parsedCreatedAt = Date.parse(rawCreatedAt);
+    if (Number.isFinite(parsedCreatedAt)) return parsedCreatedAt;
+  }
+
+  const rawDate = String(session?.date || '').trim();
+  const rawTime = String(session?.time || '').trim();
+
+  if (rawDate) {
+    const safeDate = /^\d{4}-\d{2}-\d{2}/.test(rawDate) ? rawDate.slice(0, 10) : rawDate;
+    const timeMatch = rawTime.match(/\d{1,2}:\d{2}/);
+    if (safeDate && timeMatch) {
+      const combined = `${safeDate}T${timeMatch[0]}:00`;
+      const parsed = Date.parse(combined);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+
+    const parsedDate = Date.parse(rawDate);
+    if (Number.isFinite(parsedDate)) return parsedDate;
+  }
+
+  return 0;
+};
 
 const getStatusStyles = (status) => {
   const normalizedStatus = String(status || '').toLowerCase();
@@ -60,6 +90,23 @@ const getStatusStyles = (status) => {
     dot: '',
     label: 'Scheduled',
   };
+};
+
+const matchesSessionTab = (session, activeTab) => {
+  if (activeTab !== 'scheduled' && activeTab !== 'completed') return true;
+
+  const normalizedStatus = String(session?.status || '').toLowerCase();
+  const derivedLabel = getStatusStyles(session?.status).label.toLowerCase();
+
+  if (activeTab === 'scheduled') {
+    return derivedLabel === 'scheduled' || normalizedStatus.includes('approved');
+  }
+
+  if (activeTab === 'completed') {
+    return derivedLabel === 'completed';
+  }
+
+  return true;
 };
 
 const getActionStyles = (variant, label) => {
@@ -100,6 +147,8 @@ const INITIAL_SESSION_FORM = {
   meetingLink: '',
 };
 
+const FILTER_PAGE_SIZE = 1000;
+
 const LiveSessionsPage = () => {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('all');
@@ -109,6 +158,12 @@ const LiveSessionsPage = () => {
   const [sessionFormValues, setSessionFormValues] = useState(INITIAL_SESSION_FORM);
   const [sessionFormError, setSessionFormError] = useState('');
   const [hiddenSessionIds, setHiddenSessionIds] = useState([]);
+  const requestTab =
+    activeTab === 'all' || activeTab === 'scheduled' || activeTab === 'completed' ? 'all' : activeTab;
+  const requestLimit =
+    activeTab === 'all' || activeTab === 'scheduled' || activeTab === 'completed'
+      ? FILTER_PAGE_SIZE
+      : PAGE_SIZE;
   const { data, isLoading, isError } = useLiveSessionsStats();
   const {
     data: sessionsResponse = {
@@ -117,7 +172,12 @@ const LiveSessionsPage = () => {
     },
     isLoading: isSessionsLoading,
     isError: isSessionsError,
-  } = useLiveSessions({ tab: activeTab, page, limit: PAGE_SIZE });
+  } = useLiveSessions({ tab: requestTab, page, limit: requestLimit });
+  const { data: allSessionsResponse } = useLiveSessions({
+    tab: 'all',
+    page: 1,
+    limit: FILTER_PAGE_SIZE,
+  });
   const cancelSessionMutation = useMutation({
     mutationFn: cancelLiveSession,
     onSuccess: () => {
@@ -206,7 +266,7 @@ const LiveSessionsPage = () => {
             name: u.name || u.fullName || u.username || u.email || 'Teacher',
           }))
         : [],
-    [teacherUsers?.users]
+    [teacherUsers]
   );
 
   const openSessionModal = (session = null) => {
@@ -352,6 +412,16 @@ const LiveSessionsPage = () => {
   const stats = useMemo(() => {
     if (!data || typeof data !== 'object') return {};
     const payload = data.data && typeof data.data === 'object' ? data.data : data;
+    const sessionItems = Array.isArray(allSessionsResponse?.items) ? allSessionsResponse.items : [];
+    const fallbackScheduledCount = sessionItems.filter(
+      (session) => getStatusStyles(session?.status).label.toLowerCase() === 'scheduled'
+    ).length;
+    const fallbackLiveCount = sessionItems.filter(
+      (session) => getStatusStyles(session?.status).label.toLowerCase() === 'live'
+    ).length;
+    const fallbackCompletedCount = sessionItems.filter(
+      (session) => getStatusStyles(session?.status).label.toLowerCase() === 'completed'
+    ).length;
 
     return {
       todaySessions:
@@ -362,33 +432,63 @@ const LiveSessionsPage = () => {
         payload.today ??
         payload.today_sessions_count ??
         0,
-      liveNow: payload.liveNow ?? payload.live_now ?? payload.live ?? payload.live_sessions ?? 0,
+      liveNow:
+        payload.liveNow ?? payload.live_now ?? payload.live ?? payload.live_sessions ?? fallbackLiveCount,
+      scheduledSessions:
+        payload.scheduledSessions ??
+        payload.scheduled_sessions ??
+        payload.scheduled ??
+        payload.approvedSessions ??
+        payload.approved_sessions ??
+        payload.approved ??
+        fallbackScheduledCount,
       pendingApproval:
         payload.pendingApproval ?? payload.pending_approval ?? payload.pending ?? payload.pending_sessions ?? 0,
+      completedSessions:
+        payload.completedSessions ??
+        payload.completed_sessions ??
+        payload.completed ??
+        payload.finishedSessions ??
+        payload.finished_sessions ??
+        payload.finished ??
+        fallbackCompletedCount,
       avgAttendance:
         payload.avgAttendance ?? payload.avg_attendance ?? payload.attendance ?? payload.avg_attendance_rate ?? 0,
     };
-  }, [data]);
+  }, [allSessionsResponse, data]);
 
   const sessionRows = useMemo(
     () => {
       const items = Array.isArray(sessionsResponse?.items) ? sessionsResponse.items : [];
-      if (!hiddenSessionIds.length) return items;
-      return items.filter((session) => !hiddenSessionIds.includes(session.id));
+      const visibleItems = hiddenSessionIds.length
+        ? items.filter((session) => !hiddenSessionIds.includes(session.id))
+        : items;
+      const filteredItems = visibleItems.filter((session) => matchesSessionTab(session, activeTab));
+
+      return [...filteredItems].sort((a, b) => getSessionSortTime(b) - getSessionSortTime(a));
     },
-    [sessionsResponse?.items, hiddenSessionIds]
+    [sessionsResponse, hiddenSessionIds, activeTab]
   );
 
-  const pagination = useMemo(
-    () =>
+  const pagination = useMemo(() => {
+    if (activeTab === 'all' || activeTab === 'scheduled' || activeTab === 'completed') {
+      return {
+        page: 1,
+        limit: sessionRows.length || requestLimit,
+        total: sessionRows.length,
+        totalPages: 1,
+      };
+    }
+
+    return (
       sessionsResponse?.pagination || {
         page: 1,
         limit: PAGE_SIZE,
         total: 0,
         totalPages: 1,
-      },
-    [sessionsResponse]
-  );
+      }
+    );
+  }, [activeTab, requestLimit, sessionRows.length, sessionsResponse]);
 
   useEffect(() => {
     setPage(1);
@@ -530,7 +630,7 @@ const LiveSessionsPage = () => {
     <div className="flex flex-col gap-4">
       <div className="flex w-full items-center justify-between gap-3">
         <div className="w-full max-w-[520px] rounded-[10px] border border-[#d6e3fb] bg-white p-1">
-          <div className="grid grid-cols-4 gap-1">
+          <div className="grid grid-cols-3 gap-1 md:grid-cols-6">
             {tabs.map((tab) => (
               <button
                 key={tab.key}
@@ -555,7 +655,7 @@ const LiveSessionsPage = () => {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {metrics.map((metric) => {
           const Icon = metric.icon;
           const value = stats[metric.key];
@@ -713,7 +813,13 @@ const LiveSessionsPage = () => {
             <button
               type="button"
               onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
-              disabled={page <= 1 || isSessionsLoading}
+              disabled={
+                page <= 1 ||
+                isSessionsLoading ||
+                activeTab === 'all' ||
+                activeTab === 'scheduled' ||
+                activeTab === 'completed'
+              }
               className="h-9 rounded-md border border-[#d6e3fb] px-3 font-semibold text-[#1f3f93] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Previous
@@ -721,7 +827,13 @@ const LiveSessionsPage = () => {
             <button
               type="button"
               onClick={() => setPage((prev) => Math.min(prev + 1, Number(pagination.totalPages || 1)))}
-              disabled={page >= Number(pagination.totalPages || 1) || isSessionsLoading}
+              disabled={
+                page >= Number(pagination.totalPages || 1) ||
+                isSessionsLoading ||
+                activeTab === 'all' ||
+                activeTab === 'scheduled' ||
+                activeTab === 'completed'
+              }
               className="h-9 rounded-md border border-[#d6e3fb] px-3 font-semibold text-[#1f3f93] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Next
