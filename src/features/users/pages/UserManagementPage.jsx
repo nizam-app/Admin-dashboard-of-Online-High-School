@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, X } from 'lucide-react';
 import { FiEdit2, FiTrash2, FiUserCheck, FiUserPlus, FiUserX } from 'react-icons/fi';
 import Swal from 'sweetalert2';
+import { getSubjectsList } from '../../classes/api/classesApi';
 import {
   createUser,
   deleteAdminUser,
@@ -175,7 +176,11 @@ const UserManagementPage = () => {
     isError: isUsersError,
   } = useUsers(queryParams);
 
-  const users = usersData?.users || [];
+  const allUsers = usersData?.users || [];
+  const hasPhoneVerificationData = allUsers.some((user) => user?.phoneVerified !== null);
+  const users = hasPhoneVerificationData
+    ? allUsers.filter((user) => user?.phoneVerified === true)
+    : allUsers;
   const totalPages = Number(usersData?.totalPages || 1);
   const { data: gradesFromApi = [] } = useQuery({
     queryKey: ['grades-options'],
@@ -186,6 +191,12 @@ const UserManagementPage = () => {
   const { data: subjectsFromApi = [] } = useQuery({
     queryKey: ['subjects-options'],
     queryFn: getSubjects,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+  const { data: subjectCatalog = [] } = useQuery({
+    queryKey: ['subjects-catalog'],
+    queryFn: getSubjectsList,
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
@@ -215,8 +226,9 @@ const UserManagementPage = () => {
     const fromApi = [...(usersData?.subjectOptions || []), ...subjectsFromApi]
       .map(normalizeValue)
       .filter(Boolean);
-    return Array.from(new Set(fromApi));
-  }, [usersData?.subjectOptions, subjectsFromApi]);
+    const fromCatalog = subjectCatalog.map((item) => normalizeValue(item?.name)).filter(Boolean);
+    return Array.from(new Set([...fromApi, ...fromCatalog]));
+  }, [usersData?.subjectOptions, subjectsFromApi, subjectCatalog]);
 
   const createUserMutation = useMutation({
     mutationFn: createUser,
@@ -335,6 +347,7 @@ const UserManagementPage = () => {
     const phone = normalizeValue(formValues.phone);
     const selectedGradeId = normalizeValue(formValues.grade);
     const subject = normalizeValue(formValues.subject);
+    const selectedSubject = findSubjectByName(subject);
     const pin = normalizeValue(formValues.pin);
     const confirmPin = normalizeValue(formValues.confirmPin);
 
@@ -406,6 +419,7 @@ const UserManagementPage = () => {
         : {}),
       ...(formRole === 'teacher'
         ? {
+            ...(selectedSubject?.id ? { subjectId: normalizeValue(selectedSubject.id) } : {}),
             subject,
             mainSubject: subject,
             subjects: [subject],
@@ -419,6 +433,11 @@ const UserManagementPage = () => {
   const findGradeById = (gradeId) =>
     gradeOptions.find((item) => normalizeValue(item.id) === normalizeValue(gradeId));
 
+  const findSubjectByName = (subjectName) => {
+    const normalized = normalizeValue(subjectName).toLowerCase();
+    return subjectCatalog.find((item) => normalizeValue(item?.name).toLowerCase() === normalized);
+  };
+
   const findGradeByLabel = (label) => {
     const normalized = normalizeValue(label).toLowerCase();
     return gradeOptions.find((item) => {
@@ -430,6 +449,12 @@ const UserManagementPage = () => {
 
   const openEditModal = (user) => {
     const role = normalizeValue(user?.role).toLowerCase();
+    const parsedClasses = parseAssignedClasses(user?.assignedClasses || []);
+    const teacherSubjects = uniqueListCaseInsensitive([
+      normalizeValue(user?.subject),
+      ...(user?.assignedSubjects || []),
+      ...parsedClasses.subjects,
+    ]);
     const defaultGradeId =
       normalizeValue(user?.gradeId) ||
       normalizeValue(findGradeByLabel(user?.gradeLevel)?.id) ||
@@ -440,7 +465,7 @@ const UserManagementPage = () => {
       fullName: normalizeValue(user?.name),
       phone: normalizeValue(user?.phone),
       gradeId: role === 'student' ? defaultGradeId : '',
-      subject: role === 'teacher' ? normalizeValue(user?.subject) : '',
+      subject: role === 'teacher' ? normalizeValue(teacherSubjects[0] || '') : '',
     });
     setEditError('');
     setIsEditOpen(true);
@@ -466,6 +491,7 @@ const UserManagementPage = () => {
     const fullName = normalizeValue(editValues.fullName);
     const phone = normalizeValue(editValues.phone);
     const subject = normalizeValue(editValues.subject);
+    const selectedSubject = findSubjectByName(subject);
     const gradeId = normalizeValue(editValues.gradeId);
 
     if (!fullName || !phone) {
@@ -485,9 +511,16 @@ const UserManagementPage = () => {
       }
       const payload = {
         role: 'teacher',
+        userType: 'teacher',
+        roleName: 'Teacher',
         name: fullName,
+        fullName,
         phone,
+        ...(selectedSubject?.id ? { subjectId: normalizeValue(selectedSubject.id) } : {}),
         subject,
+        mainSubject: subject,
+        subjects: [subject],
+        assignedSubjects: [subject],
         assignedGradeIds: Array.isArray(editUser.assignedGradeIds) ? editUser.assignedGradeIds : [],
         assignedGrades: Array.isArray(editUser.assignedGrades) ? editUser.assignedGrades : [],
       };
@@ -560,7 +593,6 @@ const UserManagementPage = () => {
   };
 
   const openAssignModal = (user) => {
-    const role = normalizeValue(user?.role).toLowerCase();
     const parsedClasses = parseAssignedClasses(user?.assignedClasses || []);
     const userAssignedSubjects = uniqueListCaseInsensitive([
       ...(user?.assignedSubjects || []),
@@ -582,7 +614,9 @@ const UserManagementPage = () => {
     const defaultTeacherGradeIds =
       userAssignedGradeIds.length > 0
         ? userAssignedGradeIds
-        : uniqueListCaseInsensitive(userAssignedGrades.map((grade) => findGradeByLabel(grade)?.id));
+        : userAssignedGrades.length > 0
+          ? uniqueListCaseInsensitive(userAssignedGrades.map((grade) => findGradeByLabel(grade)?.id))
+          : uniqueListCaseInsensitive(parsedClasses.gradeLabels.map((grade) => findGradeByLabel(grade)?.id));
 
     const defaultTeacherSubject =
       normalizeValue(user?.subject) || normalizeValue(userAssignedSubjects[0] || '');
@@ -662,6 +696,7 @@ const UserManagementPage = () => {
     }
 
     const subject = normalizeValue(assignmentValues.subject);
+    const selectedSubject = findSubjectByName(subject);
     const gradeIds = uniqueList(assignmentValues.gradeIds.map(String));
     if (!subject) {
       setAssignmentError('Please select one subject for the teacher');
@@ -672,16 +707,22 @@ const UserManagementPage = () => {
       return;
     }
 
-    const assignedGrades = gradeIds
-      .map((gradeId) => findGradeById(gradeId))
-      .filter(Boolean)
-      .map((grade) => normalizeValue(grade.level || grade.name))
-      .filter(Boolean);
-
     const payload = {
       role: 'teacher',
+      ...(selectedSubject?.id ? { subjectId: normalizeValue(selectedSubject.id) } : {}),
       subject,
+      mainSubject: subject,
+      subjects: [subject],
       assignedGradeIds: gradeIds,
+      assignedGrades: gradeIds
+        .map((gradeId) => findGradeById(gradeId))
+        .filter(Boolean)
+        .map((grade) => normalizeValue(grade.level || grade.name))
+        .filter(Boolean),
+      assignedClasses: gradeIds
+        .map((gradeId) => findGradeById(gradeId))
+        .filter(Boolean)
+        .map((grade) => `${normalizeValue(grade.level || grade.name)} - ${subject}`),
     };
     updateAssignmentMutation.mutate({ userId: selectedUser.id, payload });
   };
@@ -701,11 +742,19 @@ const UserManagementPage = () => {
 
     if (role === 'teacher') {
       const subject = normalizeValue(user?.subject);
-      const grades = uniqueListCaseInsensitive(user?.assignedGrades || []);
+      const grades = uniqueListCaseInsensitive(
+        (user?.assignedGrades || []).length > 0
+          ? user.assignedGrades
+          : (user?.assignedGradeIds || [])
+              .map((gradeId) => findGradeById(gradeId)?.level || findGradeById(gradeId)?.name)
+              .filter(Boolean)
+      );
       const fromTeacherAssignments = subject
         ? grades.map((grade) => `${grade} - ${subject}`)
         : [];
-      return uniqueListCaseInsensitive([...fromClasses, ...fromTeacherAssignments]);
+      return fromTeacherAssignments.length > 0
+        ? uniqueListCaseInsensitive(fromTeacherAssignments)
+        : fromClasses;
     }
 
     return fromClasses;
@@ -725,20 +774,18 @@ const UserManagementPage = () => {
     const gradeId = normalizeValue(grade?.id);
     const gradeName = normalizeValue(grade?.name);
     if (!gradeId) return false;
-    if (selectedUserRole === 'teacher') return !selectedTeacherGradeIds.includes(gradeId);
+    if (selectedUserRole === 'teacher') return true;
     if (selectedUserRole === 'student') {
       const selectedGradeId = normalizeValue(assignmentValues.gradeId);
-      return selectedGradeId !== gradeId && normalizeKey(selectedStudentGradeName) !== normalizeKey(gradeName);
+      return selectedGradeId === gradeId || normalizeKey(selectedStudentGradeName) === normalizeKey(gradeName);
     }
     return true;
   });
 
-  const availableStudentSubjects = uniqueListCaseInsensitive(subjectOptions.map(normalizeValue)).filter(
-    (subject) => !selectedStudentSubjects.some((s) => normalizeKey(s) === normalizeKey(subject))
-  );
-  const availableTeacherSubjects = uniqueListCaseInsensitive(subjectOptions.map(normalizeValue)).filter(
-    (subject) => normalizeKey(assignmentValues.subject) !== normalizeKey(subject)
-  );
+  const availableStudentSubjects = uniqueListCaseInsensitive(subjectOptions.map(normalizeValue));
+  const availableTeacherSubjects = normalizeValue(assignmentValues.subject)
+    ? [normalizeValue(assignmentValues.subject)]
+    : [];
 
   return (
     <section className="flex flex-col gap-4">
@@ -999,7 +1046,7 @@ const UserManagementPage = () => {
                     list="edit-subject-options"
                     value={editValues.subject}
                     onChange={(event) => handleEditChange('subject', event.target.value)}
-                    placeholder="Mathematics"
+                    placeholder="Select or type subject"
                     className="h-12 w-full rounded-lg border border-[#d6e3fb] px-3 text-sm outline-none focus:border-[#1f3f93]"
                   />
                   <datalist id="edit-subject-options">
@@ -1112,88 +1159,93 @@ const UserManagementPage = () => {
                         {findGradeById(assignmentValues.gradeId)?.name}
                       </span>
                     )}
+                  {selectedUserRole === 'student' &&
+                    assignmentValues.subjects.map((subject) => (
+                      <span
+                        key={`assigned-subject-${subject}`}
+                        className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white"
+                      >
+                        {subject}
+                      </span>
+                    ))}
                   {selectedUserRole === 'teacher' &&
                     assignmentValues.gradeIds
                       .map((gradeId) => findGradeById(gradeId))
                       .filter(Boolean)
                       .map((grade) => (
-                      <button
-                        key={`assigned-grade-${grade.id}`}
-                        type="button"
-                        onClick={() => toggleTeacherGrade(grade.id)}
-                        className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white"
-                        title="Remove grade"
-                      >
-                        {grade.name} x
-                      </button>
-                    ))}
+                        <span
+                          key={`assigned-grade-${grade.id}`}
+                          className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white"
+                        >
+                          {grade.name}
+                        </span>
+                      ))}
                   {selectedUserRole === 'teacher' &&
                     normalizeValue(assignmentValues.subject) && (
-                      <button
-                        type="button"
-                        onClick={() => setAssignmentValues((prev) => ({ ...prev, subject: '' }))}
-                        className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white"
-                        title="Remove subject"
-                      >
-                        {assignmentValues.subject} x
-                      </button>
+                      <span className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white">
+                        {assignmentValues.subject}
+                      </span>
                     )}
                   {selectedUserRole === 'student' &&
-                    assignmentValues.subjects.map((subject) => (
-                      <button
-                        key={`assigned-subject-${subject}`}
-                        type="button"
-                        onClick={() => toggleStudentSubject(subject)}
-                        className="rounded-lg bg-[#1f3f93] px-3 py-1.5 text-sm font-semibold text-white"
-                        title="Remove subject"
-                      >
-                        {subject} x
-                      </button>
-                    ))}
+                    !normalizeValue(assignmentValues.gradeId) &&
+                    assignmentValues.subjects.length === 0 && (
+                      <p className="text-sm text-[#7b91be]">No assignments yet.</p>
+                    )}
+                  {selectedUserRole === 'teacher' &&
+                    !normalizeValue(assignmentValues.subject) &&
+                    assignmentValues.gradeIds.length === 0 && (
+                      <p className="text-sm text-[#7b91be]">No assignments yet.</p>
+                    )}
                 </div>
               </div>
 
-              <div>
-                <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Grades</h3>
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {availableGradeOptions.map((grade) => {
-                    const isTeacher = selectedUserRole === 'teacher';
-
-                    return (
-                      <button
-                        key={grade.id}
-                        type="button"
-                        onClick={() => {
-                          if (isTeacher) {
-                            toggleTeacherGrade(grade.id);
-                          } else {
-                            setAssignmentValues((prev) => ({ ...prev, gradeId: String(grade.id) }));
-                          }
-                        }}
-                        className="rounded-xl border border-[#d6e3fb] bg-white px-3 py-3 text-left text-[#4f6695] transition hover:border-[#1f3f93] hover:bg-[#edf3ff] hover:text-[#1f3f93]"
-                      >
-                        <p className="text-lg font-semibold">{grade.name}</p>
-                      </button>
-                    );
-                  })}
-                  {availableGradeOptions.length === 0 && (
-                    <p className="col-span-full text-sm text-[#7b91be]">No remaining grades.</p>
-                  )}
+              {selectedUserRole === 'teacher' && (
+                <div>
+                  <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Grades</h3>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {availableGradeOptions.map((grade) => {
+                      const isSelected = selectedTeacherGradeIds.includes(normalizeValue(grade.id));
+                      return (
+                        <button
+                          key={grade.id}
+                          type="button"
+                          onClick={() => toggleTeacherGrade(grade.id)}
+                          className={`rounded-xl border px-3 py-3 text-left transition ${
+                            isSelected
+                              ? 'border-[#1f3f93] bg-[#edf3ff] text-[#1f3f93]'
+                              : 'border-[#d6e3fb] bg-white text-[#4f6695] hover:border-[#1f3f93] hover:bg-[#edf3ff] hover:text-[#1f3f93]'
+                          }`}
+                        >
+                          <p className="text-lg font-semibold">{grade.name}</p>
+                        </button>
+                      );
+                    })}
+                    {availableGradeOptions.length === 0 && (
+                      <p className="col-span-full text-sm text-[#7b91be]">No remaining grades.</p>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {selectedUserRole === 'student' ? (
+              {selectedUserRole === 'student' && (
                 <div>
                   <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Subjects</h3>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                     {availableStudentSubjects.map((subject) => {
                       const normalized = normalizeValue(subject);
+                      const isSelected = selectedStudentSubjects.some(
+                        (item) => normalizeKey(item) === normalizeKey(normalized)
+                      );
                       return (
                         <button
                           key={subject}
                           type="button"
                           onClick={() => toggleStudentSubject(subject)}
-                          className="rounded-xl border border-[#d6e3fb] bg-white px-3 py-3 text-left text-[#4f6695] transition hover:border-[#1f3f93] hover:bg-[#edf3ff] hover:text-[#1f3f93]"
+                          className={`rounded-xl border px-3 py-3 text-left transition ${
+                            isSelected
+                              ? 'border-[#1f3f93] bg-[#edf3ff] text-[#1f3f93]'
+                              : 'border-[#d6e3fb] bg-white text-[#4f6695] hover:border-[#1f3f93] hover:bg-[#edf3ff] hover:text-[#1f3f93]'
+                          }`}
                         >
                           <p className="text-lg font-semibold">{normalized}</p>
                         </button>
@@ -1204,7 +1256,30 @@ const UserManagementPage = () => {
                     )}
                   </div>
                 </div>
-              ) : (
+              )}
+
+              {selectedUserRole === 'student' && (
+                <div>
+                  <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Grades</h3>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {availableGradeOptions.map((grade) => (
+                      <button
+                        key={grade.id}
+                        type="button"
+                        onClick={() => setAssignmentValues((prev) => ({ ...prev, gradeId: String(grade.id) }))}
+                        className="rounded-xl border border-[#d6e3fb] bg-white px-3 py-3 text-left text-[#4f6695] transition hover:border-[#1f3f93] hover:bg-[#edf3ff] hover:text-[#1f3f93]"
+                      >
+                        <p className="text-lg font-semibold">{grade.name}</p>
+                      </button>
+                    ))}
+                    {availableGradeOptions.length === 0 && (
+                      <p className="col-span-full text-sm text-[#7b91be]">No remaining grades.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {selectedUserRole === 'teacher' && (
                 <div>
                   <h3 className="mb-3 text-xl font-semibold text-[#1f3f93]">Available Subjects</h3>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
