@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Bell, Megaphone, Users, UserSquare2, BookOpen, GraduationCap, Globe, X } from 'lucide-react';
+import { getClasses, getGradesSections } from '../../classes/api/classesApi';
 
 const typeOptions = [
   { id: 'push', label: 'Push Notification', helper: 'Instant mobile alerts', icon: Bell, tag: 'Push' },
@@ -22,21 +24,67 @@ const parseRecipients = (helper) => {
 const NotificationModal = ({ isOpen, onClose, onCreate }) => {
   const [selectedType, setSelectedType] = useState(typeOptions[0]);
   const [selectedAudience, setSelectedAudience] = useState(audienceOptions[0]);
+  const [selectedClassId, setSelectedClassId] = useState('');
+  const [selectedGradeId, setSelectedGradeId] = useState('');
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [priority, setPriority] = useState('Normal');
 
-  const recipients = useMemo(() => parseRecipients(selectedAudience.helper), [selectedAudience]);
+  const { data: classesResponse, isLoading: isClassesLoading } = useQuery({
+    queryKey: ['notification-classes'],
+    queryFn: () => getClasses({ page: 1, limit: 200, status: 'active' }),
+  });
+
+  const { data: gradesResponse = [], isLoading: isGradesLoading } = useQuery({
+    queryKey: ['notification-grades'],
+    queryFn: getGradesSections,
+  });
+
+  const classOptions = useMemo(() => {
+    const items = Array.isArray(classesResponse?.items) ? classesResponse.items : [];
+    return items.map((item) => ({
+      id: item.id,
+      label: item.className || 'Untitled Class',
+      students: item.students || 0,
+    }));
+  }, [classesResponse?.items]);
+
+  const gradeOptions = useMemo(() => {
+    const items = Array.isArray(gradesResponse) ? gradesResponse : [];
+    return items.map((item) => ({
+      id: item.id,
+      label: item.label,
+      classCount: item.classCount || 0,
+    }));
+  }, [gradesResponse]);
+
+  const selectedClass = classOptions.find((item) => item.id === selectedClassId) || null;
+  const selectedGrade = gradeOptions.find((item) => item.id === selectedGradeId) || null;
+
+  const recipients = useMemo(() => {
+    if (selectedAudience.id === 'class' && selectedClass?.students) {
+      return Number(selectedClass.students).toLocaleString();
+    }
+    return parseRecipients(selectedAudience.helper);
+  }, [selectedAudience, selectedClass]);
 
   const handleSubmit = (action) => {
     if (!onCreate) return;
     const Icon = selectedType.icon;
+
+    const targetLabel =
+      selectedAudience.id === 'class' && selectedClass
+        ? `Class: ${selectedClass.label}`
+        : selectedAudience.id === 'grade' && selectedGrade
+          ? `Grade: ${selectedGrade.label}`
+          : selectedAudience.label;
+
     onCreate({
       action,
       title: title.trim(),
       message: message.trim(),
       typeTag: selectedType.tag,
-      targetLabel: selectedAudience.label,
+      targetLabel,
       recipients,
       priorityTag: priority === 'High Priority' ? 'High Priority' : null,
       icon: <Icon size={20} />,
@@ -46,6 +94,8 @@ const NotificationModal = ({ isOpen, onClose, onCreate }) => {
     setPriority('Normal');
     setSelectedType(typeOptions[0]);
     setSelectedAudience(audienceOptions[0]);
+    setSelectedClassId('');
+    setSelectedGradeId('');
   };
 
   if (!isOpen) return null;
@@ -143,7 +193,11 @@ const NotificationModal = ({ isOpen, onClose, onCreate }) => {
                 <button
                   key={option.id}
                   type="button"
-                  onClick={() => setSelectedAudience(option)}
+                  onClick={() => {
+                    setSelectedAudience(option);
+                    if (option.id !== 'class') setSelectedClassId('');
+                    if (option.id !== 'grade') setSelectedGradeId('');
+                  }}
                   className={`flex items-start gap-3 rounded-[12px] border px-4 py-3 text-left transition ${
                     isActive
                       ? 'border-[#1f3f93] bg-[#1f3f93] text-white'
@@ -167,6 +221,42 @@ const NotificationModal = ({ isOpen, onClose, onCreate }) => {
               );
             })}
           </div>
+
+          {selectedAudience.id === 'class' && (
+            <div className="mt-3">
+              <label className="text-sm font-semibold text-[#1f3f93]">Select Class</label>
+              <select
+                value={selectedClassId}
+                onChange={(event) => setSelectedClassId(event.target.value)}
+                className="mt-2 w-full rounded-[12px] border border-[#d6e3fb] px-4 py-2.5 text-sm text-[#1f3f93]"
+              >
+                <option value="">{isClassesLoading ? 'Loading classes...' : 'Choose a class'}</option>
+                {classOptions.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {selectedAudience.id === 'grade' && (
+            <div className="mt-3">
+              <label className="text-sm font-semibold text-[#1f3f93]">Select Grade</label>
+              <select
+                value={selectedGradeId}
+                onChange={(event) => setSelectedGradeId(event.target.value)}
+                className="mt-2 w-full rounded-[12px] border border-[#d6e3fb] px-4 py-2.5 text-sm text-[#1f3f93]"
+              >
+                <option value="">{isGradesLoading ? 'Loading grades...' : 'Choose a grade'}</option>
+                {gradeOptions.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div className="mt-4">
@@ -218,4 +308,3 @@ const NotificationModal = ({ isOpen, onClose, onCreate }) => {
 };
 
 export default NotificationModal;
-
