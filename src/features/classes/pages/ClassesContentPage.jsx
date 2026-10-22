@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   FiDownload,
   FiEdit2,
+  FiMessageSquare,
   FiPlus,
   FiTrash2,
   FiUpload,
@@ -34,6 +35,7 @@ import {
   updateClass,
   updateLesson,
 } from '../api/classesApi';
+import ClassChatModerationModal from '../components/ClassChatModerationModal';
 
 const TAB_OPTIONS = ['Classes', 'Content Library', 'Assignments'];
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
@@ -71,6 +73,7 @@ const splitDueAt = (value) => {
 const ClassesContentPage = () => {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('Classes');
+  const [chatClassItem, setChatClassItem] = useState(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isAddSubjectOpen, setIsAddSubjectOpen] = useState(false);
@@ -1796,12 +1799,22 @@ const ClassesContentPage = () => {
               )}
             </div>
 
-            <div className="mt-4 grid grid-cols-1 gap-2 border-t border-[#e2ecff] pt-3">
+            <div className="mt-4 grid grid-cols-2 gap-2 border-t border-[#e2ecff] pt-3">
+              <button
+                type="button"
+                onClick={() => setChatClassItem(item)}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#e8f1ff] text-sm font-semibold text-[#1f3f93]"
+                title="Open class chat"
+              >
+                <FiMessageSquare size={15} />
+                Chat
+              </button>
               <button
                 type="button"
                 onClick={() => handleDeleteClass(item)}
                 disabled={deleteClassMutation.isPending}
                 className="inline-flex h-9 items-center justify-center rounded-md bg-[#fff3f3] text-[#e10000]"
+                title="Delete class"
               >
                 <FiTrash2 size={16} />
               </button>
@@ -1810,6 +1823,13 @@ const ClassesContentPage = () => {
           );
         })}
       </div>
+      )}
+
+      {chatClassItem && (
+        <ClassChatModerationModal
+          classItem={chatClassItem}
+          onClose={() => setChatClassItem(null)}
+        />
       )}
 
       {activeTab === 'Content Library' && (
