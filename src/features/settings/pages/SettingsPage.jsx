@@ -168,7 +168,7 @@ const SettingsPage = () => {
                 </select>
               }
             />
-            <SettingRow
+            {/* <SettingRow
               title="Password Policy"
               description="Minimum password requirements"
               control={
@@ -179,7 +179,7 @@ const SettingsPage = () => {
                   Configure
                 </button>
               }
-            />
+            /> */}
             <SettingRow
               title="IP Whitelist"
               description="Restrict access to specific IP addresses"
